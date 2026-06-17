@@ -48,7 +48,7 @@ Pour tester sans envoyer de vrais messages : `NOTIFY_DRY_RUN=1`.
 | `EDJ_SMS_TOKEN` | token API SMS (X-Api-Token) |
 | `EDJ_WA_TOKEN` | token API WhatsApp |
 | `EDJ_EMAIL_TOKEN` | token API Emailing |
-| `EDJ_EMAIL_ENDPOINT` | endpoint email (à confirmer côté EDJ Labs) |
+| `EDJ_EMAIL_ENDPOINT` | endpoint email EDJ Labs (déf. `/email/send`) |
 | `NOTIFY_PHONE` | numéro destinataire E.164 (ex. `+33…`) |
 | `NOTIFY_EMAIL` | email destinataire |
 | `ENABLED_CHANNELS` | `sms,whatsapp,email` |
@@ -92,7 +92,7 @@ traefik.http.routers.NOM-COMPLET-DU-STACK-http.middlewares           = redirect-
 5. **Déploiement** : `git tag v0.1.0 && git push --tags` → workflow vert → Update du stack.
 
 ### À finaliser avant la prod
-- **Email** : confirmer `EDJ_EMAIL_ENDPOINT` + renseigner `EDJ_EMAIL_TOKEN`
-  (EDJ Labs → Emailing → API & sender). Tester : `POST /api/test-notify`.
+- **Email** : endpoint `https://api.edj-labs.com/email/send`, corps `{ recipients, subject, html }`.
+  Renseigner `EDJ_EMAIL_TOKEN`. Tester : `POST /api/test-notify`.
 - **WhatsApp** : gateway EDJ Labs renvoie actuellement `500` — canal codé mais à vérifier.
 - **Sécurité** : régénérer les tokens SMS/WhatsApp s'ils ont fui.

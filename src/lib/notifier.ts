@@ -9,7 +9,7 @@
  * Endpoints connus :
  *   SMS      POST {BASE}/messages/send   body { address, text, subject }
  *   WhatsApp POST {BASE}/wa/send         body { address, text }
- *   Email    POST {EDJ_EMAIL_ENDPOINT}   body { recipients, subject, html }  (contrat à confirmer)
+ *   Email    POST {EDJ_EMAIL_ENDPOINT}   body { recipients, subject, html }  (défaut /email/send)
  */
 import type { AlertEvent } from "./checker";
 
@@ -85,7 +85,7 @@ export async function notify(a: AlertEvent): Promise<Record<Channel, boolean>> {
   }
 
   if (channels.includes("email") && email && process.env.EDJ_EMAIL_TOKEN) {
-    const endpoint = process.env.EDJ_EMAIL_ENDPOINT || `${base}/emails/send`;
+    const endpoint = process.env.EDJ_EMAIL_ENDPOINT || `${base}/email/send`;
     const html = `<p>${text.replace(a.link, `<a href="${a.link}">${a.link}</a>`)}</p>`;
     jobs.push({
       channel: "email",
