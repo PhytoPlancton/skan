@@ -31,6 +31,11 @@ interface Alert {
   createdAt: string;
 }
 
+interface HistoryPoint {
+  day: string;
+  availableRooms: number;
+}
+
 type Filter = "all" | "available" | "watched";
 
 const fmtDateTime = (s: string) =>
@@ -41,6 +46,90 @@ const fmtDateTime = (s: string) =>
     minute: "2-digit",
   });
 
+/** Lundi (clé de semaine) du jour donné, en YYYY-MM-DD. */
+function weekStartKey(dayStr: string): string {
+  const d = new Date(`${dayStr}T00:00:00Z`);
+  const dow = (d.getUTCDay() + 6) % 7; // lundi = 0
+  d.setUTCDate(d.getUTCDate() - dow);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Historique hebdomadaire : barres horizontales.
+ * Ordonnée = semaines (ordonnées, plus récente en haut), abscisse = places dispo.
+ */
+function HistoryChart({ points }: { points: HistoryPoint[] }) {
+  if (points.length === 0) {
+    return (
+      <p className="muted">
+        Pas encore de données — l&apos;historique se construit semaine après semaine
+        à partir d&apos;aujourd&apos;hui.
+      </p>
+    );
+  }
+
+  const byWeek = new Map<string, number>();
+  for (const p of points) {
+    const k = weekStartKey(p.day);
+    byWeek.set(k, Math.max(byWeek.get(k) ?? 0, p.availableRooms));
+  }
+  const weeks = [...byWeek.entries()]
+    .map(([week, rooms]) => ({ week, rooms }))
+    .sort((a, b) => (a.week < b.week ? 1 : -1)); // plus récente en haut
+
+  const maxVal = Math.max(1, ...weeks.map((w) => w.rooms));
+  const rowH = 30;
+  const labelW = 64;
+  const valW = 34;
+  const padR = 10;
+  const padT = 6;
+  const padB = 24;
+  const W = 580;
+  const barX = labelW + 8;
+  const barW = W - barX - valW - padR;
+  const H = padT + weeks.length * rowH + padB;
+  const fmtWeek = (k: string) => `${k.slice(8, 10)}/${k.slice(5, 7)}`;
+
+  return (
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      className="chart"
+      role="img"
+      aria-label="Historique hebdomadaire des disponibilités"
+    >
+      {weeks.map((w, i) => {
+        const y = padT + i * rowH;
+        const len = Math.max(2, (w.rooms / maxVal) * barW);
+        return (
+          <g key={w.week}>
+            <text x={labelW} y={y + rowH / 2 + 4} className="wlabel" textAnchor="end">
+              {fmtWeek(w.week)}
+            </text>
+            <rect
+              x={barX}
+              y={y + 6}
+              width={len}
+              height={rowH - 14}
+              rx={3}
+              className={w.rooms > 0 ? "bar on" : "bar"}
+            >
+              <title>{`Semaine du ${fmtWeek(w.week)} : ${w.rooms} logement(s)`}</title>
+            </rect>
+            <text x={barX + len + 6} y={y + rowH / 2 + 4} className="wval">
+              {w.rooms}
+            </text>
+          </g>
+        );
+      })}
+      <line x1={barX} y1={H - padB + 4} x2={barX + barW} y2={H - padB + 4} className="axis" />
+      <text x={barX} y={H - 5} className="xtick">0</text>
+      <text x={barX + barW} y={H - 5} className="xtick" textAnchor="end">
+        {maxVal} places dispo
+      </text>
+    </svg>
+  );
+}
+
 export default function Home() {
   const [data, setData] = useState<Dashboard | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -48,6 +137,10 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
+
+  const [selected, setSelected] = useState<Item | null>(null);
+  const [histWeeks, setHistWeeks] = useState(8);
+  const [hist, setHist] = useState<HistoryPoint[] | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -69,6 +162,23 @@ export default function Home() {
     const id = setInterval(load, 60_000);
     return () => clearInterval(id);
   }, [load]);
+
+  useEffect(() => {
+    if (!selected) return;
+    let aborted = false;
+    setHist(null);
+    fetch(`/api/history/${selected.slug}?days=${histWeeks * 7}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (!aborted) setHist(d.points ?? []);
+      })
+      .catch(() => {
+        if (!aborted) setHist([]);
+      });
+    return () => {
+      aborted = true;
+    };
+  }, [selected, histWeeks]);
 
   const toggleWatch = async (item: Item) => {
     setBusy(true);
@@ -124,7 +234,7 @@ export default function Home() {
         skan
       </div>
       <p className="tagline">
-        Veille des résidences ARPEJ — alerte Email + WhatsApp + SMS dès qu'une place se libère.
+        Veille des résidences ARPEJ — alerte Email + WhatsApp + SMS dès qu&apos;une place se libère.
       </p>
 
       <div className="stats">
@@ -182,10 +292,13 @@ export default function Home() {
 
       <div className="grid">
         {items.map((it) => (
-          <div key={it.slug} className={`card${it.watched ? " watched" : ""}`}>
-            <a className="title" href={it.link} target="_blank" rel="noreferrer">
-              {it.title}
-            </a>
+          <div
+            key={it.slug}
+            className={`card${it.watched ? " watched" : ""}`}
+            onClick={() => setSelected(it)}
+            title="Voir l'historique"
+          >
+            <div className="title">{it.title}</div>
             <div className="meta">
               {[it.city, it.priceFrom ? `dès ${Math.round(it.priceFrom)} €` : null]
                 .filter(Boolean)
@@ -193,13 +306,14 @@ export default function Home() {
             </div>
             <div className="foot">
               <span className={`badge ${it.available ? "available" : "none"}`}>
-                {it.available
-                  ? `${it.availableRooms} dispo`
-                  : "Aucun dispo"}
+                {it.available ? `${it.availableRooms} dispo` : "Aucun dispo"}
               </span>
               <button
                 className={`watch-btn${it.watched ? " on" : ""}`}
-                onClick={() => toggleWatch(it)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleWatch(it);
+                }}
                 disabled={busy}
               >
                 {it.watched ? "★ Surveillée" : "☆ Surveiller"}
@@ -211,15 +325,12 @@ export default function Home() {
 
       <h2 className="section-title">Alertes récentes</h2>
       {alerts.length === 0 ? (
-        <p className="muted">Aucune alerte envoyée pour l'instant.</p>
+        <p className="muted">Aucune alerte envoyée pour l&apos;instant.</p>
       ) : (
         alerts.map((a, i) => (
           <div className="alert-row" key={`${a.slug}-${i}`}>
             <div>
-              <a href={a.link} target="_blank" rel="noreferrer">
-                {a.title}
-              </a>{" "}
-              — {a.availableRooms} logement(s)
+              {a.title} — {a.availableRooms} logement(s)
               {Object.entries(a.channels).map(([c, ok]) => (
                 <span key={c} className={`chan ${ok ? "ok" : "ko"}`}>
                   {c}
@@ -229,6 +340,54 @@ export default function Home() {
             <span className="when">{fmtDateTime(a.createdAt)}</span>
           </div>
         ))
+      )}
+
+      {selected && (
+        <div className="modal-overlay" onClick={() => setSelected(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <div className="modal-title">{selected.title}</div>
+                <div className="muted">
+                  {[selected.city, selected.priceFrom ? `dès ${Math.round(selected.priceFrom)} €` : null]
+                    .filter(Boolean)
+                    .join(" · ") || "—"}
+                </div>
+              </div>
+              <button className="close" onClick={() => setSelected(null)} aria-label="Fermer">
+                ✕
+              </button>
+            </div>
+
+            <div className="modal-sub">
+              <span className={`badge ${selected.available ? "available" : "none"}`}>
+                {selected.available ? `${selected.availableRooms} dispo` : "Aucun dispo"}
+              </span>
+              <div className="filters">
+                {[4, 8, 12].map((w) => (
+                  <button
+                    key={w}
+                    className={histWeeks === w ? "active" : ""}
+                    onClick={() => setHistWeeks(w)}
+                  >
+                    {w} sem.
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="chart-label">Logements disponibles par semaine (pic)</div>
+            {hist === null ? (
+              <p className="muted">Chargement…</p>
+            ) : (
+              <HistoryChart points={hist} />
+            )}
+
+            <a className="modal-link" href={selected.link} target="_blank" rel="noreferrer">
+              Voir sur arpej.fr →
+            </a>
+          </div>
+        </div>
       )}
     </main>
   );

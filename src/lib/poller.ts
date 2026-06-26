@@ -5,12 +5,15 @@
  */
 import cron from "node-cron";
 import { runCheck } from "./check-run";
+import { ensureIndexes } from "./repo";
 
 const globalForPoller = globalThis as unknown as { _skanPollerStarted?: boolean };
 
 export function startPoller(): void {
   if (globalForPoller._skanPollerStarted) return;
   globalForPoller._skanPollerStarted = true;
+
+  ensureIndexes().catch((e) => console.error("[poller] ensureIndexes:", e));
 
   const minutes = Math.min(59, Math.max(1, Number(process.env.POLL_INTERVAL_MIN || 5)));
   const expr = `*/${minutes} * * * *`;

@@ -11,12 +11,14 @@
  */
 import { fetchAllResidences } from "./arpej";
 import { computeAlerts, type WatchRecord } from "./checker";
+import { parisDay } from "./dates";
 import { notify } from "./notifier";
 import {
   applyCheckUpdates,
   listWatches,
   markNotified,
   recordAlert,
+  recordDailyHistory,
 } from "./repo";
 
 export interface CheckSummary {
@@ -37,6 +39,16 @@ export async function runCheck(): Promise<CheckSummary> {
   const residences = await fetchAllResidences();
   const { alerts, updates } = computeAlerts(watches, residences);
   const updateBySlug = new Map<string, WatchRecord>(updates.map((u) => [u.slug, u]));
+
+  // Historique quotidien : toutes les résidences live + les surveillées absentes (0).
+  const liveSlugs = new Set(residences.map((r) => r.slug));
+  const points = residences.map((r) => ({ slug: r.slug, availableRooms: r.availableRooms }));
+  for (const w of watches) {
+    if (!liveSlugs.has(w.slug)) points.push({ slug: w.slug, availableRooms: 0 });
+  }
+  await recordDailyHistory(points, parisDay()).catch((e) =>
+    console.error("[check] history:", e),
+  );
 
   let sent = 0;
   let failed = 0;
