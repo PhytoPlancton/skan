@@ -13,7 +13,12 @@ import { decideApplication } from "./apply-matching";
 import { fetchAllResidences } from "./arpej";
 import { computeAlerts, type AlertEvent, type WatchRecord } from "./checker";
 import { parisDay } from "./dates";
-import { applyCounters, createMissionIfNone, recordSkip } from "./missions";
+import {
+  applyCounters,
+  createMissionIfNone,
+  hasMissionToday,
+  recordSkip,
+} from "./missions";
 import { notify, notifyText } from "./notifier";
 import {
   applyCheckUpdates,
@@ -85,13 +90,10 @@ export async function runCheck(): Promise<CheckSummary> {
 
   await applyCheckUpdates(updates);
 
-  // ── Auto-apply : évaluer chaque alerte contre la config ─────────────
-  const priceBySlug = new Map(residences.map((r) => [r.slug, r.priceFrom]));
-  for (const alert of alerts) {
-    await evaluateAutoApply(alert, priceBySlug.get(alert.slug) ?? null).catch((e) =>
-      console.error("[check] auto-apply:", e),
-    );
-  }
+  // ── Auto-apply : toute résidence ARMÉE et disponible maintenant ─────
+  // (indépendant des transitions : armer une résidence déjà dispo => on postule ;
+  //  l'idempotence hasMissionToday empêche les doublons/spam.)
+  await runAutoApply(residences).catch((e) => console.error("[check] auto-apply:", e));
 
   console.log(
     `[check] ${watches.length} surveillée(s), ${alerts.length} alerte(s), ${sent} envoyée(s), ${failed} échec(s)`,
@@ -107,14 +109,41 @@ export async function runCheck(): Promise<CheckSummary> {
 }
 
 /**
- * Évalue une alerte pour l'auto-candidature : crée une mission (hybride/auto),
- * notifie « aurait postulé » en mode à blanc, ou journalise le refus motivé.
+ * Parcourt les résidences ARMÉES (stratégie ≠ off) et disponibles, et lance
+ * l'évaluation d'auto-candidature pour chacune (idempotent via hasMissionToday).
  */
-async function evaluateAutoApply(alert: AlertEvent, priceFrom: number | null): Promise<void> {
+async function runAutoApply(residences: import("./arpej").Residence[]): Promise<void> {
   const settings = await getSettings();
-  // Micro-optimisation : ne rien journaliser tant que l'agent n'a jamais été activé.
-  if (!settings.agentEnabled && Object.keys(settings.strategies).length === 0) return;
+  if (!settings.agentEnabled) return; // agent coupé → aucune activité d'auto-apply
+  const armed = Object.entries(settings.strategies).filter(([, s]) => s && s.mode !== "off");
+  if (armed.length === 0) return;
 
+  const bySlug = new Map(residences.map((r) => [r.slug, r]));
+  for (const [slug] of armed) {
+    const r = bySlug.get(slug);
+    if (!r || r.availableRooms <= 0) continue; // on ne postule que si dispo maintenant
+    if (await hasMissionToday(slug)) continue; // déjà traité aujourd'hui → skip silencieux
+    const alert: AlertEvent = {
+      slug,
+      title: r.title,
+      link: r.link,
+      availableRooms: r.availableRooms,
+    };
+    await evaluateAutoApply(settings, alert, r.priceFrom).catch((e) =>
+      console.error("[check] auto-apply", slug, e),
+    );
+  }
+}
+
+/**
+ * Évalue une candidature : crée une mission (hybride/auto), notifie « aurait
+ * postulé » en mode à blanc, ou journalise le refus motivé.
+ */
+async function evaluateAutoApply(
+  settings: Awaited<ReturnType<typeof getSettings>>,
+  alert: AlertEvent,
+  priceFrom: number | null,
+): Promise<void> {
   const counters = await applyCounters();
   const decision = decideApplication(settings, alert, priceFrom, counters);
 

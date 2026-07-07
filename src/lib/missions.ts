@@ -127,6 +127,16 @@ export async function recordSkip(
   } as MissionDoc);
 }
 
+/** Une mission existe-t-elle déjà pour ce slug (active OU créée aujourd'hui) ? (idempotence) */
+export async function hasMissionToday(slug: string): Promise<boolean> {
+  const db = await getDb();
+  const n = await db.collection<MissionDoc>(COLL).countDocuments({
+    slug,
+    $or: [{ status: { $in: ACTIVE_STATUSES } }, { dayKey: parisDay() }],
+  });
+  return n > 0;
+}
+
 export async function listMissions(limit = 50): Promise<MissionDoc[]> {
   const db = await getDb();
   return db
