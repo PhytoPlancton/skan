@@ -212,18 +212,30 @@ export async function createRecord(
     throw new InterventionError(`pas arrivé sur iBail (url: ${page.url()})`);
   }
 
-  // Deux « Je dépose mon dossier » sur la page (titre H1 + bouton du lot) →
-  // viser le VRAI bouton d'action (role=button), sinon le dernier lien matché.
-  let lotCta = page.getByRole("button", { name: /je d[ée]pose mon dossier/i }).first();
-  if (!(await lotCta.isVisible().catch(() => false))) {
-    lotCta = page
-      .locator("a, button")
-      .filter({ hasText: /je d[ée]pose mon dossier/i })
-      .last();
+  // Plusieurs « Je dépose mon dossier » (titre de page + bouton du lot).
+  // On liste les candidats et on prend le bouton VISIBLE le plus bas (= carte du lot).
+  const cands = await page
+    .locator("a, button")
+    .filter({ hasText: /je d[ée]pose mon dossier/i })
+    .all();
+  const diag: string[] = [];
+  let lotCta: Locator | null = null;
+  let bestY = -1;
+  for (const el of cands) {
+    const vis = await el.isVisible().catch(() => false);
+    const box = vis ? await el.boundingBox().catch(() => null) : null;
+    const tag = await el.evaluate((e) => e.tagName).catch(() => "?");
+    const href = await el.getAttribute("href").catch(() => null);
+    diag.push(`${tag} vis=${vis} y=${box ? Math.round(box.y) : "-"}${href ? " " + href.slice(0, 45) : ""}`);
+    if (vis && box && box.y > bestY) {
+      bestY = box.y;
+      lotCta = el;
+    }
   }
-  if (!(await lotCta.isVisible().catch(() => false))) {
+  console.log("[agent][diag] candidats dépôt iBail:", JSON.stringify(diag));
+  if (!lotCta) {
     await shoot(page, missionId, "lot_cta_introuvable");
-    throw new InterventionError("aucun lot avec « Je dépose mon dossier » sur iBail (place déjà partie ?)");
+    throw new InterventionError("aucun bouton de dépôt visible sur iBail (voir [diag] candidats)");
   }
   await killOverlays(page);
   await shoot(page, missionId, "lots_disponibles");
