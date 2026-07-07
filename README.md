@@ -96,3 +96,43 @@ traefik.http.routers.NOM-COMPLET-DU-STACK-http.middlewares           = redirect-
   Renseigner `EDJ_EMAIL_TOKEN`. Tester : `POST /api/test-notify`.
 - **WhatsApp** : gateway EDJ Labs renvoie actuellement `500` — canal codé mais à vérifier.
 - **Sécurité** : régénérer les tokens SMS/WhatsApp s'ils ont fui.
+
+---
+
+## v2 — Auto-candidature (login skan + agent iBail)
+
+### Auth de l'app (obligatoire dès qu'on stocke des données perso)
+1. Générer le hash : `npm run hash-password -- 'ton-mot-de-passe'`
+2. Sur le stack web `skan`, ajouter : `AUTH_PASSWORD_HASH=…`, `AUTH_SECRET=$(openssl rand -hex 32)`,
+   `VAULT_KEY=$(openssl rand -hex 32)`.
+3. Redéployer → l'app demande le mot de passe. `/settings` et le coffre deviennent accessibles.
+
+> ⚠️ `VAULT_KEY` déchiffre garants/session iBail : sauvegarde-la, sa perte = coffre illisible.
+
+### Gmail app password (lecture des magic links iBail)
+1. compte Google → **Sécurité** → activer la **validation en 2 étapes**.
+2. **Mots de passe des applications** → générer un mot de passe (16 caractères).
+3. Le mettre dans `GMAIL_IMAP_APP_PASSWORD` (+ `GMAIL_IMAP_USER=nicolas.monniot14@gmail.com`).
+
+### Stack agent (`skan-agent`)
+Second stack EDJ Labs, image `ghcr.io/phytoplancton/skan-agent:latest` :
+- **Ports** : vide · **Labels Traefik** : aucun (c'est un worker, pas de HTTP) · **1 replica**.
+- **Networks** : réseau avec accès Internet (iBail, Gmail, EDJ, Mongo Atlas).
+- **Env vars** : `MONGODB_URI`, `MONGODB_DB`, `VAULT_KEY`, `EDJ_*`, `NOTIFY_*`, `PUBLIC_APP_URL`,
+  `IBAIL_EMAIL`, `GMAIL_IMAP_USER`, `GMAIL_IMAP_APP_PASSWORD` (mêmes valeurs que le web pour les partagées).
+  Pas besoin de `AUTH_*` ni `CRON_SECRET` côté agent.
+
+### Mise en service (progressive, recommandée)
+1. Sur `/settings` : renseigner **garants** + **dossier type**, armer 1 résidence (« coup de cœur »),
+   mode **HYBRIDE**, **mode à blanc ON**. Activer l'agent.
+2. **Calibration** (dry-run, ne soumet/ne crée rien) sur le dossier brouillon existant :
+   `docker exec <conteneur-agent> npx tsx agent/main.ts --calibrate` → vérifier les captures
+   (collection Mongo `screenshots`) et les logs.
+3. Désactiver le **mode à blanc** → la prochaine place arme une vraie mission hybride
+   (dossier préparé + SMS avec lien GO ; rien n'est soumis sans ton clic).
+4. Full-auto se débloque seul après 2 soumissions hybrides réussies.
+
+### Garde-fous (rappel)
+Un dépôt à la fois · fenêtre 07–23h · délai aléatoire · 2/jour, 4/semaine max · zéro retry ·
+stop + SMS sur captcha/2FA/DOM inattendu · vérif « dossier déjà en cours » · journal des refus motivés.
+Détails : `tasks/settings-spec.md`.

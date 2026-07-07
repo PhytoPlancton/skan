@@ -36,6 +36,38 @@ interface HistoryPoint {
   availableRooms: number;
 }
 
+interface Mission {
+  slug: string;
+  title: string;
+  link: string;
+  status: string;
+  mode: string;
+  reason?: string;
+  createdAt: string;
+}
+
+const MISSION_LABEL: Record<string, string> = {
+  pending: "en file",
+  preparing: "préparation",
+  awaiting_go: "attend ton GO",
+  approved: "GO reçu",
+  submitting: "soumission…",
+  submitted: "soumis ✅",
+  skipped: "ignoré",
+  failed: "échec",
+  intervention: "🚨 intervention",
+  expired: "GO expiré",
+};
+
+const MISSION_CLASS: Record<string, string> = {
+  submitted: "ok",
+  awaiting_go: "ok",
+  approved: "ok",
+  intervention: "ko",
+  failed: "ko",
+  expired: "ko",
+};
+
 type Filter = "all" | "available" | "watched";
 
 const fmtDateTime = (s: string) =>
@@ -141,16 +173,19 @@ export default function Home() {
   const [selected, setSelected] = useState<Item | null>(null);
   const [histWeeks, setHistWeeks] = useState(8);
   const [hist, setHist] = useState<HistoryPoint[] | null>(null);
+  const [missions, setMissions] = useState<Mission[]>([]);
 
   const load = useCallback(async () => {
     try {
-      const [r, a] = await Promise.all([
+      const [r, a, m] = await Promise.all([
         fetch("/api/residences", { cache: "no-store" }),
         fetch("/api/alerts", { cache: "no-store" }),
+        fetch("/api/missions", { cache: "no-store" }),
       ]);
       if (!r.ok) throw new Error("Chargement des résidences impossible");
       setData(await r.json());
       if (a.ok) setAlerts((await a.json()).alerts ?? []);
+      if (m.ok) setMissions((await m.json()).missions ?? []);
       setError(null);
     } catch (e) {
       setError((e as Error).message);
@@ -327,6 +362,24 @@ export default function Home() {
           </div>
         ))}
       </div>
+
+      {missions.length > 0 && (
+        <>
+          <h2 className="section-title">Candidatures automatiques</h2>
+          {missions.map((m, i) => (
+            <div className="alert-row" key={`${m.slug}-${i}`}>
+              <div>
+                {m.title}
+                <span className={`chan ${MISSION_CLASS[m.status] ?? ""}`}>
+                  {MISSION_LABEL[m.status] ?? m.status}
+                </span>
+                {m.reason && <span className="muted"> — {m.reason}</span>}
+              </div>
+              <span className="when">{fmtDateTime(m.createdAt)}</span>
+            </div>
+          ))}
+        </>
+      )}
 
       <h2 className="section-title">Alertes récentes</h2>
       {alerts.length === 0 ? (

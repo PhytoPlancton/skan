@@ -123,14 +123,14 @@ Objectif : skan détecte une place → un agent dépose le dossier automatiqueme
 
 ## Phases (à valider avant implémentation)
 - [ ] **A0 — Questions bloquantes** (cf. « En attente ») : auth iBail, test réutilisation docs, défauts étape 4.
-- [ ] **A1 — Auth skan** (login + sessions + protection routes).
-- [ ] **A2 — Coffre chiffré** (crypto lib + UI upload + statut/péremption des pièces).
-- [ ] **A3 — Settings** (page + modèle de config) — spec complète : tasks/settings-spec.md.
-- [ ] **A4 — Queue missions + matching stratégies** (logique pure testable).
-- [ ] **A5 — Agent Playwright** : login + dépôt sur le dossier Camille Sée 0% existant en DRY-RUN
+- [x] **A1 — Auth skan** (login + sessions + protection routes).
+- [x] **A2 — Coffre chiffré** (crypto lib + UI upload + statut/péremption des pièces).
+- [x] **A3 — Settings** (page + modèle de config) — spec complète : tasks/settings-spec.md.
+- [x] **A4 — Queue missions + matching stratégies** (logique pure testable).
+- [x] **A5 — Agent Playwright** : login + dépôt sur le dossier Camille Sée 0% existant en DRY-RUN
       (remplit tout, ne soumet JAMAIS) → preuve par captures.
-- [ ] **A6 — Flux GO hybride** (lien signé, expiration, page de confirmation).
-- [ ] **A7 — Suivi des dossiers** + notifications par événement.
+- [x] **A6 — Flux GO hybride** (lien signé, expiration, page de confirmation).
+- [x] **A7 — Suivi des dossiers** + notifications par événement.
 - [ ] **A8 — Déploiement** : service agent dans le stack (image Playwright), env vars, doc.
 
 ## A0 — RÉSOLU (tests utilisateur 2026-07-07)

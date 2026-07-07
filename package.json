@@ -12,13 +12,17 @@
     "hash-password": "tsx scripts/hash-password.ts"
   },
   "dependencies": {
+    "imapflow": "^1.4.6",
+    "mailparser": "^3.9.14",
     "mongodb": "^6.12.0",
     "next": "^15.1.6",
     "node-cron": "^3.0.3",
+    "playwright": "1.61.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@types/mailparser": "^3.4.6",
     "@types/node": "^22.10.5",
     "@types/node-cron": "^3.0.11",
     "@types/react": "^19.0.7",

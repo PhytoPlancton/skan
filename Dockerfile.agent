@@ -1,0 +1,17 @@
+# syntax=docker/dockerfile:1
+# Agent d'auto-candidature : worker long-running (Playwright + Chromium).
+# Base officielle Playwright — Chromium et dépendances système préinstallés.
+# La version DOIT matcher le package "playwright" (1.61.1).
+FROM mcr.microsoft.com/playwright:v1.61.1-noble
+
+WORKDIR /app
+ENV TZ=Europe/Paris
+
+# tsx est en devDependency → installer aussi les devDeps
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev
+
+COPY . .
+
+# Worker : pas de port exposé, boucle interne (30 s), une mission à la fois.
+CMD ["npx", "tsx", "agent/main.ts"]

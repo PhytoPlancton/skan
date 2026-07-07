@@ -136,3 +136,98 @@ export async function listMissions(limit = 50): Promise<MissionDoc[]> {
     .limit(limit)
     .toArray();
 }
+
+// ── Opérations côté agent ──────────────────────────────────────────
+
+/**
+ * Réclame la prochaine mission à traiter (atomique) :
+ * une `approved` (GO cliqué — priorité, l'utilisateur attend) sinon une
+ * `pending` arrivée à maturité (notBefore <= now). Une seule à la fois.
+ */
+export async function claimNextMission(): Promise<MissionDoc | null> {
+  const db = await getDb();
+  const coll = db.collection<MissionDoc>(COLL);
+  const now = new Date();
+
+  const approved = await coll.findOneAndUpdate(
+    { status: "approved" },
+    {
+      $set: { status: "submitting", updatedAt: now },
+      $push: { journal: { at: now, event: "claimed_for_submission" } },
+    },
+    { sort: { updatedAt: 1 }, returnDocument: "after" },
+  );
+  if (approved) return approved;
+
+  return coll.findOneAndUpdate(
+    { status: "pending", notBefore: { $lte: now } },
+    {
+      $set: { status: "preparing", updatedAt: now },
+      $push: { journal: { at: now, event: "claimed_for_preparation" } },
+    },
+    { sort: { createdAt: 1 }, returnDocument: "after" },
+  );
+}
+
+export async function updateMission(
+  id: ObjectId,
+  patch: Partial<MissionDoc>,
+  journalEvent?: string,
+  journalDetail?: string,
+): Promise<void> {
+  const db = await getDb();
+  const now = new Date();
+  const update: Record<string, unknown> = { $set: { ...patch, updatedAt: now } };
+  if (journalEvent) {
+    update.$push = { journal: { at: now, event: journalEvent, detail: journalDetail } };
+  }
+  await db.collection<MissionDoc>(COLL).updateOne({ _id: id }, update as never);
+}
+
+/** Missions hybrides dont le lien GO a expiré → `expired` (renvoyées pour notif). */
+export async function expireStaleGoMissions(): Promise<MissionDoc[]> {
+  const db = await getDb();
+  const coll = db.collection<MissionDoc>(COLL);
+  const stale = await coll
+    .find({ status: "awaiting_go", goTokenExp: { $lt: new Date() } })
+    .toArray();
+  for (const m of stale) {
+    await updateMission(m._id!, { status: "expired" }, "go_expired");
+  }
+  return stale;
+}
+
+export async function getMissionByToken(token: string): Promise<MissionDoc | null> {
+  if (!token || token.length < 16) return null;
+  const db = await getDb();
+  return db.collection<MissionDoc>(COLL).findOne({ goToken: token });
+}
+
+/** Clic GO : awaiting_go + token valide + non expiré → approved (atomique). */
+export async function approveMissionByToken(
+  token: string,
+): Promise<{ ok: boolean; reason?: string; mission?: MissionDoc }> {
+  if (!token || token.length < 16) return { ok: false, reason: "token invalide" };
+  const db = await getDb();
+  const now = new Date();
+  const mission = await db.collection<MissionDoc>(COLL).findOneAndUpdate(
+    { goToken: token, status: "awaiting_go", goTokenExp: { $gte: now } },
+    {
+      $set: { status: "approved", updatedAt: now },
+      $push: { journal: { at: now, event: "go_clicked" } },
+    },
+    { returnDocument: "after" },
+  );
+  if (mission) return { ok: true, mission };
+
+  const existing = await db.collection<MissionDoc>(COLL).findOne({ goToken: token });
+  if (!existing) return { ok: false, reason: "lien inconnu" };
+  if (existing.status === "approved" || existing.status === "submitting") {
+    return { ok: true, mission: existing }; // double clic → idempotent
+  }
+  if (existing.status === "submitted") return { ok: false, reason: "déjà soumis" };
+  if (existing.goTokenExp && existing.goTokenExp < now) {
+    return { ok: false, reason: "lien expiré" };
+  }
+  return { ok: false, reason: `statut ${existing.status}` };
+}
