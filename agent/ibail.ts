@@ -494,32 +494,43 @@ export async function prepareReservation(
     .catch(() => [] as string[]);
   console.log("[agent][diag] étape4 champs:", JSON.stringify(fields).slice(0, 1400));
 
+  // Champs iBail exacts (relevés en calibration) ; fillDateSmart en filet de sécurité.
   const entry = computeEntryDate(profile);
-  if (!(await fillDateSmart(page, /date d'entr[ée]e/i, entry))) {
+  const okEntry =
+    (await tryFillDate(page.locator("#booking_desired_started_at"), entry)) ||
+    (await fillDateSmart(page, /date d'entr[ée]e/i, entry));
+  if (!okEntry) {
     await shoot(page, missionId, "etape4_date_entree_echec");
-    throw new InterventionError(
-      "étape 4 : champ « date d'entrée » introuvable — copie-moi la ligne [diag] étape4 champs",
-    );
+    throw new InterventionError("étape 4 : date d'entrée (booking_desired_started_at) non remplie");
   }
   await humanPause();
   if (profile.defaultExitDate) {
-    await fillDateSmart(page, /date de sortie/i, profile.defaultExitDate);
+    if (!(await tryFillDate(page.locator("#booking_desired_finished_at"), profile.defaultExitDate))) {
+      await fillDateSmart(page, /date de sortie/i, profile.defaultExitDate);
+    }
     await humanPause();
   }
 
-  // « Comment avez-vous connu ARPEJ ? » (select natif attendu)
-  const knownSelect = page
-    .locator("div, label")
-    .filter({ hasText: /comment avez-vous connu/i })
-    .last()
-    .locator("select")
-    .first();
+  // « Comment avez-vous connu ARPEJ ? » — select requis : on garantit une valeur.
+  const knownSelect = page.locator("#booking_how_learned_about_arpej");
   if (await knownSelect.isVisible().catch(() => false)) {
-    await knownSelect
-      .selectOption({ label: profile.howKnown })
-      .catch(async () => {
-        console.warn(`[agent] option « ${profile.howKnown} » indisponible — laissée telle quelle`);
-      });
+    let chosen = false;
+    try {
+      await knownSelect.selectOption({ label: profile.howKnown });
+      chosen = true;
+    } catch {
+      /* label absent de la liste */
+    }
+    if (!chosen) {
+      const vals = await knownSelect
+        .locator("option")
+        .evaluateAll((os) =>
+          os.map((o) => (o as HTMLOptionElement).value).filter((v) => v && v.trim() !== ""),
+        )
+        .catch(() => [] as string[]);
+      if (vals[0]) await knownSelect.selectOption(vals[0]).catch(() => {});
+      console.warn(`[agent] option « ${profile.howKnown} » introuvable → 1re option choisie`);
+    }
     await humanPause();
   }
 
@@ -545,13 +556,18 @@ export async function submitReservation(
 ): Promise<void> {
   await gotoStep(page, recordId, /demande de r[ée]servation/i);
 
-  const submit = page
-    .locator("button, input[type=submit], a")
-    .filter({ hasText: /envoyer|valider|soumettre|d[ée]poser ma demande|transmettre/i })
-    .last();
+  let submit = page
+    .locator('input[type="submit"][name="commit"], button[name="commit"]')
+    .first();
+  if (!(await submit.isVisible().catch(() => false))) {
+    submit = page
+      .locator("button, input[type=submit], a")
+      .filter({ hasText: /envoyer|valider|soumettre|d[ée]poser ma demande|transmettre/i })
+      .last();
+  }
   if (!(await submit.isVisible().catch(() => false))) {
     await shoot(page, missionId, "soumission_bouton_introuvable");
-    throw new InterventionError("bouton de soumission introuvable à l'étape 4");
+    throw new InterventionError("bouton de soumission (commit) introuvable à l'étape 4");
   }
   await shoot(page, missionId, "avant_soumission");
   await submit.click();

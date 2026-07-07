@@ -7,6 +7,7 @@ interface Info {
   availableRooms: number;
   link: string;
   status: string;
+  ibailReview: string | null;
   expired: boolean;
 }
 
@@ -84,6 +85,17 @@ export default function GoPage({ params }: { params: Promise<{ token: string }> 
                   Le dossier est prêt et complet. Clique pour <b>soumettre</b> ta candidature à
                   ARPEJ (tu attestes sur l&apos;honneur l&apos;exactitude des informations).
                 </p>
+                {info.ibailReview && (
+                  <a
+                    className="modal-link"
+                    href={info.ibailReview}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ marginTop: 0 }}
+                  >
+                    🔎 Vérifier / compléter le dossier (garants…) sur iBail avant de valider
+                  </a>
+                )}
                 <button className="btn" onClick={confirm} disabled={busy}>
                   {busy ? "Envoi…" : "🚀 GO — soumettre ma candidature"}
                 </button>

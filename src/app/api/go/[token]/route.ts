@@ -16,6 +16,9 @@ export async function GET(
     availableRooms: m.availableRooms,
     link: m.link,
     status: m.status,
+    ibailReview: m.ibailRecordId
+      ? `https://ibail.arpej.fr/edition/records/${m.ibailRecordId}/tenants`
+      : null,
     expired: !!(m.goTokenExp && m.goTokenExp < new Date()),
   });
 }
