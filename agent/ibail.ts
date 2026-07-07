@@ -310,39 +310,73 @@ export async function ensureGuarantors(
 ): Promise<void> {
   await gotoStep(page, recordId, /garant/i);
 
-  const chips = page.getByText(/^garant /i);
-  if ((await chips.count().catch(() => 0)) >= 1) {
+  if ((await page.getByText(/^garant /i).count().catch(() => 0)) >= 1) {
     await shoot(page, missionId, "etape2_garants_deja_presents");
     return;
   }
 
-  // Jusqu'à 2 réutilisations successives
-  for (let i = 0; i < 2; i++) {
-    const reuse = page
-      .locator("a, button")
-      .filter({ hasText: /cliquez ici/i })
-      .first();
-    if (!(await reuse.isVisible().catch(() => false))) break;
-    await reuse.click();
-    await humanPause();
-    const options = page
-      .locator("[role=dialog], .modal, body")
-      .locator("a, button, li")
-      .filter({ hasText: /garant/i });
-    const count = await options.count().catch(() => 0);
-    if (count === 0) break;
-    await options.nth(0).click().catch(() => {});
-    await sleep(1800);
+  // Lien de réutilisation (href précis observé sur iBail — ouvre une modale Turbo)
+  const reuse = page
+    .locator('a[href*="record_person_selections/new"][href*="Guarantor"]')
+    .first();
+  if (!(await reuse.isVisible().catch(() => false))) {
+    await shoot(page, missionId, "etape2_lien_reutilisation_introuvable");
+    throw new InterventionError("étape 2 : lien de réutilisation garant introuvable");
   }
 
-  const finalCount = await page.getByText(/^garant /i).count().catch(() => 0);
-  if (finalCount === 0) {
-    await shoot(page, missionId, "etape2_garants_reutilisation_echec");
-    throw new InterventionError(
-      "étape 2 : impossible de réutiliser les garants — complète-les sur iBail puis re-clique GO",
-    );
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const dialog = page.locator("dialog[open]").first();
+    if (!(await dialog.isVisible().catch(() => false))) {
+      if (!(await reuse.isVisible().catch(() => false))) break;
+      await reuse.click();
+      await dialog.waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
+      await humanPause();
+    }
+    await shoot(page, missionId, `etape2_modale_${attempt}`);
+
+    // DIAGNOSTIC calibration : structure exacte de la modale (pour finaliser les sélecteurs)
+    const html = (await dialog.innerHTML().catch(() => "")).replace(/\s+/g, " ");
+    console.log(`[agent][diag] modale garant #${attempt} (900c): ${html.slice(0, 900)}`);
+
+    // Cas A : <select> de personnes enregistrées → 1re vraie option
+    const select = dialog.locator("select").first();
+    if (await select.isVisible().catch(() => false)) {
+      const values = await select
+        .locator("option")
+        .evaluateAll((os) =>
+          os.map((o) => (o as HTMLOptionElement).value).filter((v) => v && v.trim() !== ""),
+        )
+        .catch(() => [] as string[]);
+      if (values[0]) {
+        await select.selectOption(values[0]).catch(() => {});
+        await humanPause();
+      }
+    }
+
+    // Bouton de validation de la modale
+    const confirm = dialog
+      .locator("button, input[type=submit], a")
+      .filter({
+        hasText: /ajouter|valider|s[ée]lectionner|choisir|confirmer|enregistrer|utiliser|associer/i,
+      })
+      .first();
+    if (await confirm.isVisible().catch(() => false)) {
+      await confirm.click().catch(() => {});
+      await sleep(2500);
+    } else {
+      break; // pas de bouton évident → on s'arrête et on remonte le diagnostic
+    }
+
+    if ((await page.getByText(/^garant /i).count().catch(() => 0)) >= 1) {
+      await shoot(page, missionId, "etape2_garants_ok");
+      return;
+    }
   }
-  await shoot(page, missionId, "etape2_garants_ok");
+
+  await shoot(page, missionId, "etape2_garants_reutilisation_echec");
+  throw new InterventionError(
+    "étape 2 : réutilisation garant à calibrer — copie-moi la ligne de log « [diag] modale garant » (ou complète les garants sur iBail puis re-GO)",
+  );
 }
 
 /** Étape 3 : vérifie que chaque catégorie de pièce obligatoire (*) contient au moins un document. */
