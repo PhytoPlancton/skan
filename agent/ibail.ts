@@ -10,7 +10,7 @@ import type { ObjectId } from "mongodb";
 import { getVaultSection, setVaultSection } from "../src/lib/vault.ts";
 import type { ApplicationProfile } from "../src/lib/vault.ts";
 import { saveScreenshot } from "../src/lib/screenshots.ts";
-import { fetchMagicLink } from "./mailbox.ts";
+import { fetchMagicLink, MailboxAuthError } from "./mailbox.ts";
 
 const IBAIL = "https://ibail.arpej.fr";
 
@@ -91,6 +91,7 @@ export async function ensureLoggedIn(
   }
   await emailInput.fill(email);
   await humanPause();
+  console.log(`[agent] email saisi (${email}), envoi de la demande de lien`);
 
   const submit = page
     .locator("button, input[type=submit]")
@@ -101,20 +102,30 @@ export async function ensureLoggedIn(
     throw new InterventionError("bouton d'envoi du lien de connexion introuvable");
   }
   await submit.click();
+  console.log("[agent] demande envoyée → lecture du mail (IMAP Gmail)…");
 
-  const link = await fetchMagicLink(requestedAt);
-  if (!link) {
-    throw new InterventionError("magic link iBail non reçu par email (3 min)");
+  let link: string | null;
+  try {
+    link = await fetchMagicLink(requestedAt);
+  } catch (e) {
+    if (e instanceof MailboxAuthError) throw new InterventionError((e as Error).message);
+    throw e;
   }
+  if (!link) {
+    throw new InterventionError(
+      "magic link iBail non reçu/illisible en 3 min — vérifie l'app password Gmail et que le mail arrive bien",
+    );
+  }
+  console.log("[agent] lien reçu → navigation vers la session");
   await page.goto(link, { waitUntil: "domcontentloaded" });
   await humanPause();
   await page.goto(`${IBAIL}/records`, { waitUntil: "domcontentloaded" });
   if (!(await isLoggedIn(page))) {
     await shoot(page, missionId, "login_echec");
-    throw new InterventionError("connexion via magic link échouée");
+    throw new InterventionError("connexion via magic link échouée (page après lien inattendue)");
   }
   await setVaultSection("ibailSession", await ctx.storageState());
-  console.log("[agent] session iBail régénérée et persistée");
+  console.log("[agent] session iBail régénérée et persistée ✓");
 }
 
 /** Accepte un éventuel bandeau cookies (best effort, non bloquant). */
