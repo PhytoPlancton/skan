@@ -137,6 +137,7 @@ async function handlePreparing(mission: MissionDoc): Promise<void> {
       `skan — GO ? ${mission.title}`,
       `${PUBLIC_URL}/go/${token}`,
     );
+    console.log(`[agent] ✓ dossier PRÊT (${mission.title}) — SMS GO envoyé, en attente de ton clic`);
   } catch (err) {
     await handleFailure(mission, err);
   }
@@ -167,6 +168,7 @@ async function markSubmitted(mission: MissionDoc, how: string): Promise<void> {
       { _id: mission._id },
       { $set: { remindGuarantorsAt: new Date(Date.now() + 4 * 3_600_000) } },
     );
+  console.log(`[agent] ✅ dossier SOUMIS (${mission.title}, ${how})`);
   await notifyText(
     `✅ skan — dossier SOUMIS pour ${mission.title} (${how}). 📩 Important : tes garants doivent cliquer le lien de validation reçu par email — préviens-les maintenant.`,
     `skan — dossier soumis : ${mission.title}`,
@@ -181,6 +183,7 @@ async function handleFailure(mission: MissionDoc, err: unknown): Promise<void> {
     return;
   }
   if (err instanceof InterventionError) {
+    console.error(`[agent] 🚨 intervention requise (${mission.title}): ${err.message}`);
     await updateMission(
       id,
       { status: "intervention", reason: err.message },
@@ -194,6 +197,7 @@ async function handleFailure(mission: MissionDoc, err: unknown): Promise<void> {
     return;
   }
   const msg = (err as Error)?.message ?? String(err);
+  console.error(`[agent] ❌ échec (${mission.title}): ${msg.slice(0, 160)}`);
   await updateMission(id, { status: "failed", reason: msg }, "failed", msg);
   await notifyText(
     `❌ skan — échec technique pour ${mission.title} : ${msg.slice(0, 140)}. Rien n'a été soumis.`,

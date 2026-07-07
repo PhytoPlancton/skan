@@ -134,16 +134,24 @@ export async function ensureLoggedIn(
   console.log("[agent] session iBail régénérée et persistée ✓");
 }
 
-/** Accepte un éventuel bandeau cookies (best effort, non bloquant). */
-async function dismissCookieBanner(page: Page): Promise<void> {
-  const btn = page
+/** Ferme les bandeaux cookies ET retire les popups bloquants (best effort). */
+async function killOverlays(page: Page): Promise<void> {
+  const accept = page
     .locator("button, a")
     .filter({ hasText: /tout accepter|accepter|j'accepte|ok pour moi/i })
     .first();
-  if (await btn.isVisible().catch(() => false)) {
-    await btn.click().catch(() => {});
-    await sleep(600);
+  if (await accept.isVisible().catch(() => false)) {
+    await accept.click().catch(() => {});
+    await sleep(400);
   }
+  // Popups qui interceptent les clics (arpej.fr : #my-popup) → retirés du DOM.
+  await page
+    .evaluate(() => {
+      for (const sel of ["#my-popup", ".newsletter-popup", ".modal-newsletter", "#sib-container"]) {
+        document.querySelectorAll(sel).forEach((el) => el.remove());
+      }
+    })
+    .catch(() => {});
 }
 
 /**
@@ -156,29 +164,29 @@ export async function createRecord(
   missionId: ObjectId | null,
 ): Promise<string> {
   await page.goto(residenceLink, { waitUntil: "domcontentloaded" });
-  await dismissCookieBanner(page);
+  await killOverlays(page);
   await humanPause();
 
-  // Bouton côté arpej.fr → mène sur iBail (page des lots de la résidence)
+  // Le CTA arpej.fr « Je dépose mon dossier » pointe (href) vers iBail et s'ouvre
+  // en _blank ; un popup peut masquer le clic → on suit directement le href.
   const depositCta = page
     .locator("a, button")
     .filter({ hasText: /je d[ée]pose mon dossier/i })
     .first();
-  if (!(await depositCta.isVisible().catch(() => false))) {
+  const ctaHref = (await depositCta.count().catch(() => 0))
+    ? await depositCta.getAttribute("href").catch(() => null)
+    : null;
+  if (ctaHref && ctaHref.startsWith(IBAIL)) {
+    await page.goto(ctaHref, { waitUntil: "domcontentloaded" });
+  } else if (await depositCta.isVisible().catch(() => false)) {
+    await depositCta.click().catch(() => {});
+    await page.waitForLoadState("domcontentloaded").catch(() => {});
+  } else {
     await shoot(page, missionId, "cta_depot_introuvable");
     throw new InterventionError("bouton « Je dépose mon dossier » introuvable sur la page résidence");
   }
-  await depositCta.click();
-  await page.waitForLoadState("domcontentloaded");
+  await killOverlays(page);
   await humanPause();
-
-  if (!page.url().startsWith(IBAIL)) {
-    // le CTA arpej.fr ouvre parfois un onglet — suivre le lien directement
-    const href = await depositCta.getAttribute("href").catch(() => null);
-    if (href && href.startsWith(IBAIL)) {
-      await page.goto(href, { waitUntil: "domcontentloaded" });
-    }
-  }
   if (!page.url().startsWith(IBAIL)) {
     await shoot(page, missionId, "redirection_ibail_echec");
     throw new InterventionError(`pas arrivé sur iBail (url: ${page.url()})`);
@@ -193,8 +201,11 @@ export async function createRecord(
     await shoot(page, missionId, "lot_cta_introuvable");
     throw new InterventionError("aucun lot avec « Je dépose mon dossier » sur iBail (place déjà partie ?)");
   }
+  await killOverlays(page);
   await shoot(page, missionId, "lots_disponibles");
-  await lotCta.click();
+  await lotCta.click().catch(async () => {
+    await lotCta.click({ force: true }).catch(() => {});
+  });
   await humanPause();
 
   // Modal de confirmation « Dépôt de dossier — Êtes-vous sûr… » → Oui
