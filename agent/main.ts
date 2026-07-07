@@ -13,6 +13,7 @@
 import { randomBytes } from "node:crypto";
 import type { ObjectId } from "mongodb";
 
+import { fetchAllResidences } from "../src/lib/arpej.ts";
 import {
   claimNextMission,
   expireStaleGoMissions,
@@ -52,6 +53,20 @@ async function loadProfile(): Promise<ApplicationProfile> {
   return { ...DEFAULT_PROFILE, ...(p ?? {}) };
 }
 
+/**
+ * La place est-elle encore réellement disponible ? (garde utile quand l'agent
+ * tourne sur un PC non-24/7 : une mission peut avoir vieilli pendant l'arrêt.)
+ * En cas d'erreur réseau on ne bloque pas — createRecord détecte l'absence de lot.
+ */
+async function stillAvailable(slug: string): Promise<boolean> {
+  try {
+    const list = await fetchAllResidences();
+    return list.some((r) => r.slug === slug && r.availableRooms > 0);
+  } catch {
+    return true;
+  }
+}
+
 /** Prépare le dossier complet (étapes 1→4) sans soumettre. Renvoie le recordId. */
 async function prepare(mission: MissionDoc): Promise<string> {
   const profile = await loadProfile();
@@ -86,6 +101,20 @@ async function submit(mission: MissionDoc): Promise<void> {
 async function handlePreparing(mission: MissionDoc): Promise<void> {
   const id = mission._id!;
   try {
+    // Garde anti-place-morte (PC non-24/7 : la mission a pu vieillir).
+    if (!(await stillAvailable(mission.slug))) {
+      await updateMission(
+        id,
+        { status: "expired", reason: "place partie avant traitement" },
+        "expired_gone",
+      );
+      await notifyText(
+        `⌛️ skan — la place pour ${mission.title} est partie avant que l'agent ne la traite (PC hors-ligne au bon moment ?). Aucun dépôt tenté.`,
+        `skan — place partie : ${mission.title}`,
+      );
+      return;
+    }
+
     const recordId = await prepare(mission);
 
     if (mission.mode === "auto") {

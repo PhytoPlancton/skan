@@ -1,0 +1,14 @@
+# Agent d'auto-candidature — à lancer sur TON PC (Docker Desktop, Windows/Mac/Linux).
+# Le web (skan.nmt.ovh) reste sur EDJ Labs ; seul cet agent tourne chez toi.
+#
+#   1) copie agent.env.example -> .env et remplis les valeurs
+#   2) docker compose -f docker-compose.agent.yml pull
+#   3) docker compose -f docker-compose.agent.yml up -d
+#   calibration (dry-run, ne soumet rien) :
+#   docker compose -f docker-compose.agent.yml run --rm agent npx tsx agent/main.ts --calibrate
+services:
+  agent:
+    image: ghcr.io/phytoplancton/skan-agent:latest
+    env_file: .env
+    restart: unless-stopped
+    # redémarre avec Docker Desktop au boot du PC → traite les missions en attente.

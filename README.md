@@ -114,13 +114,24 @@ traefik.http.routers.NOM-COMPLET-DU-STACK-http.middlewares           = redirect-
 2. **Mots de passe des applications** → générer un mot de passe (16 caractères).
 3. Le mettre dans `GMAIL_IMAP_APP_PASSWORD` (+ `GMAIL_IMAP_USER=nicolas.monniot14@gmail.com`).
 
-### Stack agent (`skan-agent`)
-Second stack EDJ Labs, image `ghcr.io/phytoplancton/skan-agent:latest` :
-- **Ports** : vide · **Labels Traefik** : aucun (c'est un worker, pas de HTTP) · **1 replica**.
-- **Networks** : réseau avec accès Internet (iBail, Gmail, EDJ, Mongo Atlas).
-- **Env vars** : `MONGODB_URI`, `MONGODB_DB`, `VAULT_KEY`, `EDJ_*`, `NOTIFY_*`, `PUBLIC_APP_URL`,
-  `IBAIL_EMAIL`, `GMAIL_IMAP_USER`, `GMAIL_IMAP_APP_PASSWORD` (mêmes valeurs que le web pour les partagées).
-  Pas besoin de `AUTH_*` ni `CRON_SECRET` côté agent.
+### Agent : sur TON PC (Docker Desktop) — recommandé
+L'agent tourne chez toi (IP résidentielle = quasi indétectable ; évite d'héberger Chromium 24/7).
+Le web `skan` reste sur EDJ Labs et alerte 24/7 même PC éteint ; seul le dépôt auto attend le PC.
+
+1. Rendre l'image `skan-agent` **publique** (GHCR, comme `skan`) — ou `docker login ghcr.io`.
+2. Récupérer 2 fichiers du repo sur ton PC : `docker-compose.agent.yml` + `agent.env.example`.
+3. `copy agent.env.example .env` puis remplir (mêmes valeurs que le web pour Mongo/VAULT_KEY/EDJ/NOTIFY ;
+   `VAULT_KEY` **identique** au web sinon déchiffrement impossible ; + `IBAIL_EMAIL`, `GMAIL_IMAP_*`).
+4. `docker compose -f docker-compose.agent.yml pull`
+5. **Calibration** (dry-run, ne crée/soumet rien) :
+   `docker compose -f docker-compose.agent.yml run --rm agent npx tsx agent/main.ts --calibrate`
+6. En routine : `docker compose -f docker-compose.agent.yml up -d`
+   (`restart: unless-stopped` → redémarre au boot du PC et traite les missions en attente).
+
+> PC non-24/7 : à chaque traitement l'agent re-vérifie que la place existe encore ; si elle est
+> partie pendant l'arrêt, il ne tente rien et te notifie. Les alertes de détection, elles, restent 24/7.
+
+Pas besoin de `AUTH_*` ni `CRON_SECRET` côté agent. (Alternative serveur EDJ Labs 24/7 : voir historique — même image, en stack worker sans ports ni labels Traefik.)
 
 ### Mise en service (progressive, recommandée)
 1. Sur `/settings` : renseigner **garants** + **dossier type**, armer 1 résidence (« coup de cœur »),
