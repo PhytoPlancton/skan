@@ -237,18 +237,49 @@ export async function createRecord(
     await shoot(page, missionId, "lot_cta_introuvable");
     throw new InterventionError("aucun bouton de dépôt visible sur iBail (voir [diag] candidats)");
   }
+  const cta = lotCta;
   await killOverlays(page);
   await shoot(page, missionId, "lots_disponibles");
-  await lotCta.click().catch(async () => {
-    await lotCta.click({ force: true }).catch(() => {});
-  });
-  await humanPause();
 
-  // Modal de confirmation « Dépôt de dossier — Êtes-vous sûr… » → Oui
-  const oui = page.locator("button, a").filter({ hasText: /^oui$/i }).first();
-  if (await oui.isVisible().catch(() => false)) {
-    await oui.click();
-    await page.waitForLoadState("domcontentloaded");
+  // Le lien de dépôt pointe vers /records?availability_id=… → on y va directement.
+  const depHref = await cta.getAttribute("href").catch(() => null);
+  if (depHref) {
+    const url = depHref.startsWith("http")
+      ? depHref
+      : IBAIL + (depHref.startsWith("/") ? depHref : "/" + depHref);
+    await page.goto(url, { waitUntil: "domcontentloaded" });
+  } else {
+    await cta.click().catch(async () => {
+      await cta.click({ force: true }).catch(() => {});
+    });
+    await page.waitForLoadState("domcontentloaded").catch(() => {});
+  }
+  await killOverlays(page);
+  await sleep(1500);
+
+  // Confirmation « Dépôt de dossier — Êtes-vous sûr… » → bouton Oui / Confirmer.
+  const confirm = page
+    .locator("dialog[open], [role=dialog], form, body")
+    .locator("button, a")
+    .filter({ hasText: /\boui\b|confirmer|valider|d[ée]poser ma demande|je confirme/i })
+    .first();
+  const hasConfirm = await confirm.isVisible().catch(() => false);
+  console.log(`[agent][diag] après lien dépôt: url=${page.url()} confirmVisible=${hasConfirm}`);
+  if (hasConfirm) {
+    await confirm.click().catch(() => {});
+    await page.waitForLoadState("networkidle").catch(() => {});
+  } else {
+    // pas de bouton évident → dump des boutons présents pour calibrer
+    const btns = await page
+      .locator("button, a[role=button], input[type=submit]")
+      .evaluateAll((els) =>
+        els
+          .slice(0, 12)
+          .map((e) => (e.textContent || (e as HTMLInputElement).value || "").trim())
+          .filter(Boolean),
+      )
+      .catch(() => [] as string[]);
+    console.log("[agent][diag] boutons page confirm:", JSON.stringify(btns));
   }
   await sleep(2500);
 
