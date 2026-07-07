@@ -4,7 +4,13 @@
  * inattendu → InterventionError (stop + alerte humaine), jamais de forçage.
  * Les délais entre actions sont humains (aléatoires), une mission à la fois.
  */
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Locator,
+  type Page,
+} from "playwright";
 import type { ObjectId } from "mongodb";
 
 import { getVaultSection, setVaultSection } from "../src/lib/vault.ts";
@@ -429,17 +435,38 @@ export function computeEntryDate(profile: ApplicationProfile, now = new Date()):
   return frDate(tomorrow);
 }
 
-async function fillDateNear(page: Page, label: RegExp, ddmmyyyy: string): Promise<boolean> {
-  const container = page
-    .locator("div, label, fieldset")
-    .filter({ hasText: label })
-    .last();
-  const input = container.locator("input").first();
+/** Remplit un champ date (natif type=date, texte, ou picker flatpickr) et vérifie la valeur. */
+async function tryFillDate(input: Locator, ddmmyyyy: string): Promise<boolean> {
   if (!(await input.isVisible().catch(() => false))) return false;
   const type = (await input.getAttribute("type").catch(() => "")) || "text";
-  await input.fill(type === "date" ? toIsoDate(ddmmyyyy) : ddmmyyyy).catch(() => {});
-  const val = await input.inputValue().catch(() => "");
-  return val.length > 0;
+  const value = type === "date" ? toIsoDate(ddmmyyyy) : ddmmyyyy;
+  await input.fill(value).catch(() => {});
+  let cur = await input.inputValue().catch(() => "");
+  if (!cur) {
+    // pickers qui ignorent fill() → clic + frappe
+    await input.click().catch(() => {});
+    await input.type(value, { delay: 40 }).catch(() => {});
+    await input.press("Escape").catch(() => {});
+    cur = await input.inputValue().catch(() => "");
+  }
+  return cur.length > 0;
+}
+
+/** Trouve le champ date par plusieurs stratégies (label[for], proximité). */
+async function fillDateSmart(page: Page, labelRe: RegExp, ddmmyyyy: string): Promise<boolean> {
+  // 1) association <label for="id"> → #id
+  const labels = page.locator("label").filter({ hasText: labelRe });
+  if ((await labels.count().catch(() => 0)) > 0) {
+    const forId = await labels.first().getAttribute("for").catch(() => null);
+    if (forId) {
+      if (await tryFillDate(page.locator(`[id="${forId}"]`).first(), ddmmyyyy)) return true;
+    }
+  }
+  // 2) proximité : conteneur portant le libellé
+  const cont = page.locator("div, fieldset, label").filter({ hasText: labelRe }).last();
+  const near = cont.locator("input").first();
+  if (await tryFillDate(near, ddmmyyyy)) return true;
+  return false;
 }
 
 /**
@@ -453,15 +480,30 @@ export async function prepareReservation(
   missionId: ObjectId | null,
 ): Promise<void> {
   await gotoStep(page, recordId, /demande de r[ée]servation/i);
+  await shoot(page, missionId, "etape4_avant");
+
+  // DIAGNOSTIC calibration : lister les champs de l'étape 4 (cibler date + select exactement)
+  const fields = await page
+    .locator("form input, form select, form textarea")
+    .evaluateAll((els) =>
+      els.map((e) => {
+        const el = e as HTMLInputElement;
+        return `${el.tagName.toLowerCase()}[type=${el.getAttribute("type") || ""}] name=${el.getAttribute("name") || ""} id=${el.id || ""} ph=${el.getAttribute("placeholder") || ""}`;
+      }),
+    )
+    .catch(() => [] as string[]);
+  console.log("[agent][diag] étape4 champs:", JSON.stringify(fields).slice(0, 1400));
 
   const entry = computeEntryDate(profile);
-  if (!(await fillDateNear(page, /date d'entr[ée]e souhait[ée]e/i, entry))) {
+  if (!(await fillDateSmart(page, /date d'entr[ée]e/i, entry))) {
     await shoot(page, missionId, "etape4_date_entree_echec");
-    throw new InterventionError("étape 4 : champ « date d'entrée souhaitée » introuvable");
+    throw new InterventionError(
+      "étape 4 : champ « date d'entrée » introuvable — copie-moi la ligne [diag] étape4 champs",
+    );
   }
   await humanPause();
   if (profile.defaultExitDate) {
-    await fillDateNear(page, /date de sortie souhait[ée]e/i, profile.defaultExitDate);
+    await fillDateSmart(page, /date de sortie/i, profile.defaultExitDate);
     await humanPause();
   }
 
