@@ -158,11 +158,31 @@ async function killOverlays(page: Page): Promise<void> {
  * Crée le dossier pour la résidence (bouton « Je dépose mon dossier »)
  * et renvoie l'id du record iBail. Détecte le doublon (→ SkipMission).
  */
+/** Ids des dossiers présents dans « Mes dossiers » (pour repérer le nouveau). */
+async function listRecordIds(page: Page): Promise<Set<string>> {
+  await page.goto(`${IBAIL}/records`, { waitUntil: "domcontentloaded" });
+  await humanPause();
+  const hrefs = await page
+    .locator('a[href*="/edition/records/"]')
+    .evaluateAll((els) => els.map((e) => e.getAttribute("href") || ""))
+    .catch(() => [] as string[]);
+  const ids = new Set<string>();
+  for (const h of hrefs) {
+    const mm = h.match(/\/edition\/records\/(\d+)/);
+    if (mm) ids.add(mm[1]);
+  }
+  return ids;
+}
+
 export async function createRecord(
   page: Page,
   residenceLink: string,
   missionId: ObjectId | null,
 ): Promise<string> {
+  // Snapshot AVANT dépôt : le nouveau dossier sera l'id « en plus ».
+  // Garantit qu'on ne cible JAMAIS un dossier existant (EOLE, etc.).
+  const before = await listRecordIds(page);
+
   await page.goto(residenceLink, { waitUntil: "domcontentloaded" });
   await killOverlays(page);
   await humanPause();
@@ -192,11 +212,15 @@ export async function createRecord(
     throw new InterventionError(`pas arrivé sur iBail (url: ${page.url()})`);
   }
 
-  // Sur iBail : bloc(s) de lot avec bouton « Je dépose mon dossier »
-  const lotCta = page
-    .locator("a, button")
-    .filter({ hasText: /je d[ée]pose mon dossier/i })
-    .first();
+  // Deux « Je dépose mon dossier » sur la page (titre H1 + bouton du lot) →
+  // viser le VRAI bouton d'action (role=button), sinon le dernier lien matché.
+  let lotCta = page.getByRole("button", { name: /je d[ée]pose mon dossier/i }).first();
+  if (!(await lotCta.isVisible().catch(() => false))) {
+    lotCta = page
+      .locator("a, button")
+      .filter({ hasText: /je d[ée]pose mon dossier/i })
+      .last();
+  }
   if (!(await lotCta.isVisible().catch(() => false))) {
     await shoot(page, missionId, "lot_cta_introuvable");
     throw new InterventionError("aucun lot avec « Je dépose mon dossier » sur iBail (place déjà partie ?)");
@@ -227,22 +251,20 @@ export async function createRecord(
     throw new SkipMission("iBail : dossier déjà en cours pour ce lot");
   }
 
-  // Après « Oui », iBail ouvre LE NOUVEAU dossier → son id est dans l'URL.
-  // NE PAS prendre le 1er de « Mes dossiers » : ce serait potentiellement un AUTRE dossier.
-  console.log("[agent][diag] URL après dépôt:", page.url());
-  const m = page.url().match(/\/edition\/records\/(\d+)/);
-  if (!m) {
-    await shoot(page, missionId, "record_id_introuvable");
-    const txt = (await page.locator("body").innerText().catch(() => ""))
-      .replace(/\s+/g, " ")
-      .slice(0, 300);
-    console.log("[agent][diag] pas d'id dans l'URL, contenu:", txt);
+  // Le nouveau dossier = l'id présent APRÈS mais absent AVANT (jamais un dossier existant).
+  const after = await listRecordIds(page);
+  const fresh = [...after].filter((id) => !before.has(id));
+  console.log(`[agent][diag] dossiers avant=${before.size} après=${after.size} nouveaux=[${fresh.join(",")}]`);
+  if (fresh.length === 0) {
+    await shoot(page, missionId, "aucun_nouveau_dossier");
     throw new InterventionError(
-      "dossier créé mais id absent de l'URL après dépôt (voir [diag]) — ciblage à ajuster",
+      "dépôt effectué mais aucun nouveau dossier détecté (le clic n'a pas créé le dossier ?)",
     );
   }
+  const recordId = fresh.sort((a, b) => Number(b) - Number(a))[0];
+  console.log(`[agent] nouveau dossier créé : #${recordId}`);
   await shoot(page, missionId, "record_cree");
-  return m[1];
+  return recordId;
 }
 
 /** Récupère le record « en cours de création » le plus récent (mode calibration). */
