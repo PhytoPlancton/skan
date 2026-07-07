@@ -363,3 +363,31 @@ a {
   font-size: 14px;
   text-decoration: none;
 }
+
+/* Login */
+.login-wrap {
+  max-width: 380px;
+  padding-top: 18vh;
+}
+.login-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 18px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px;
+}
+.login-card input {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 11px 14px;
+  font-size: 14px;
+}
+.login-card input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
