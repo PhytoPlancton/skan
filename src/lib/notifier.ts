@@ -45,15 +45,23 @@ async function postJson(
   }
 }
 
-/**
- * Envoie l'alerte sur tous les canaux actifs. Renvoie le succès par canal.
- */
+/** Envoie l'alerte « place disponible » sur tous les canaux actifs. */
 export async function notify(a: AlertEvent): Promise<Record<Channel, boolean>> {
+  return notifyText(buildMessage(a), `ARPEJ — ${a.title} : logement disponible`, a.link);
+}
+
+/**
+ * Envoie un message libre (missions, GO, interventions…) sur les canaux actifs.
+ * Renvoie le succès par canal.
+ */
+export async function notifyText(
+  text: string,
+  subject: string,
+  linkForHtml?: string,
+): Promise<Record<Channel, boolean>> {
   const base = process.env.EDJ_API_BASE || "https://api.edj-labs.com";
   const phone = process.env.NOTIFY_PHONE;
   const email = process.env.NOTIFY_EMAIL;
-  const text = buildMessage(a);
-  const subject = `ARPEJ — ${a.title} : logement disponible`;
   const channels = enabledChannels();
 
   if (process.env.NOTIFY_DRY_RUN === "1") {
@@ -86,7 +94,11 @@ export async function notify(a: AlertEvent): Promise<Record<Channel, boolean>> {
 
   if (channels.includes("email") && email && process.env.EDJ_EMAIL_TOKEN) {
     const endpoint = process.env.EDJ_EMAIL_ENDPOINT || `${base}/email/send`;
-    const html = `<p>${text.replace(a.link, `<a href="${a.link}">${a.link}</a>`)}</p>`;
+    const html = `<p>${
+      linkForHtml
+        ? text.replace(linkForHtml, `<a href="${linkForHtml}">${linkForHtml}</a>`)
+        : text
+    }</p>`;
     jobs.push({
       channel: "email",
       run: postJson(endpoint, process.env.EDJ_EMAIL_TOKEN, {

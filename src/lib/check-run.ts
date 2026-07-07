@@ -9,10 +9,12 @@
  *     (réessai au prochain cycle) ; sinon on enregistre l'alerte.
  *  5. persiste le nouvel état.
  */
+import { decideApplication } from "./apply-matching";
 import { fetchAllResidences } from "./arpej";
-import { computeAlerts, type WatchRecord } from "./checker";
+import { computeAlerts, type AlertEvent, type WatchRecord } from "./checker";
 import { parisDay } from "./dates";
-import { notify } from "./notifier";
+import { applyCounters, createMissionIfNone, recordSkip } from "./missions";
+import { notify, notifyText } from "./notifier";
 import {
   applyCheckUpdates,
   listWatches,
@@ -20,6 +22,7 @@ import {
   recordAlert,
   recordDailyHistory,
 } from "./repo";
+import { getSettings } from "./settings";
 
 export interface CheckSummary {
   checked: number;
@@ -82,6 +85,14 @@ export async function runCheck(): Promise<CheckSummary> {
 
   await applyCheckUpdates(updates);
 
+  // ── Auto-apply : évaluer chaque alerte contre la config ─────────────
+  const priceBySlug = new Map(residences.map((r) => [r.slug, r.priceFrom]));
+  for (const alert of alerts) {
+    await evaluateAutoApply(alert, priceBySlug.get(alert.slug) ?? null).catch((e) =>
+      console.error("[check] auto-apply:", e),
+    );
+  }
+
   console.log(
     `[check] ${watches.length} surveillée(s), ${alerts.length} alerte(s), ${sent} envoyée(s), ${failed} échec(s)`,
   );
@@ -93,4 +104,54 @@ export async function runCheck(): Promise<CheckSummary> {
     failed,
     at: at.toISOString(),
   };
+}
+
+/**
+ * Évalue une alerte pour l'auto-candidature : crée une mission (hybride/auto),
+ * notifie « aurait postulé » en mode à blanc, ou journalise le refus motivé.
+ */
+async function evaluateAutoApply(alert: AlertEvent, priceFrom: number | null): Promise<void> {
+  const settings = await getSettings();
+  // Micro-optimisation : ne rien journaliser tant que l'agent n'a jamais été activé.
+  if (!settings.agentEnabled && Object.keys(settings.strategies).length === 0) return;
+
+  const counters = await applyCounters();
+  const decision = decideApplication(settings, alert, priceFrom, counters);
+
+  if (decision.action === "skip") {
+    await recordSkip(alert, decision.reason);
+    console.log(`[apply] skip ${alert.slug} — ${decision.reason}`);
+    return;
+  }
+
+  if (decision.dryRun) {
+    await recordSkip(alert, "mode à blanc : aurait postulé");
+    await notifyText(
+      `🧪 skan [À BLANC] — aurait postulé pour ${alert.title} (${alert.availableRooms} dispo, mode ${decision.mode}). Désactive le mode à blanc dans Settings pour armer réellement.`,
+      `skan à blanc — ${alert.title}`,
+    );
+    return;
+  }
+
+  const res = await createMissionIfNone({
+    slug: alert.slug,
+    title: alert.title,
+    link: alert.link,
+    availableRooms: alert.availableRooms,
+    status: "pending",
+    mode: decision.mode,
+    dryRun: false,
+    notBefore: decision.notBefore,
+  });
+  if (!res.created) {
+    console.log(`[apply] mission non créée pour ${alert.slug} — ${res.reason}`);
+    return;
+  }
+  console.log(
+    `[apply] mission créée pour ${alert.slug} (mode ${decision.mode}, pas avant ${decision.notBefore.toISOString()})`,
+  );
+  await notifyText(
+    `🤖 skan — candidature ${decision.mode === "auto" ? "automatique" : "hybride"} programmée pour ${alert.title} (${alert.availableRooms} dispo). Préparation ~${decision.notBefore.toLocaleTimeString("fr-FR", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit" })}.`,
+    `skan — candidature programmée : ${alert.title}`,
+  );
 }

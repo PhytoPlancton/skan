@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node --import tsx --test test/checker.test.ts test/crypto.test.ts",
+    "test": "node --import tsx --test test/checker.test.ts test/crypto.test.ts test/matching.test.ts",
     "test:live": "node --import tsx --test test/arpej.live.test.ts",
     "verify": "tsx scripts/verify-detection.ts",
     "hash-password": "tsx scripts/hash-password.ts"
