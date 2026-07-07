@@ -214,7 +214,7 @@ export async function createRecord(
     await oui.click();
     await page.waitForLoadState("domcontentloaded");
   }
-  await sleep(1500);
+  await sleep(2500);
 
   // Doublon : « Vous avez déjà un dossier en cours pour ce lot. »
   if (
@@ -227,15 +227,19 @@ export async function createRecord(
     throw new SkipMission("iBail : dossier déjà en cours pour ce lot");
   }
 
-  // Récupérer l'id du record fraîchement créé depuis « Mes dossiers »
-  await page.goto(`${IBAIL}/records`, { waitUntil: "domcontentloaded" });
-  await humanPause();
-  const editLink = page.locator('a[href*="/edition/records/"]').first();
-  const href = await editLink.getAttribute("href").catch(() => null);
-  const m = href?.match(/\/edition\/records\/(\d+)/);
+  // Après « Oui », iBail ouvre LE NOUVEAU dossier → son id est dans l'URL.
+  // NE PAS prendre le 1er de « Mes dossiers » : ce serait potentiellement un AUTRE dossier.
+  console.log("[agent][diag] URL après dépôt:", page.url());
+  const m = page.url().match(/\/edition\/records\/(\d+)/);
   if (!m) {
     await shoot(page, missionId, "record_id_introuvable");
-    throw new InterventionError("record créé mais id introuvable dans « Mes dossiers »");
+    const txt = (await page.locator("body").innerText().catch(() => ""))
+      .replace(/\s+/g, " ")
+      .slice(0, 300);
+    console.log("[agent][diag] pas d'id dans l'URL, contenu:", txt);
+    throw new InterventionError(
+      "dossier créé mais id absent de l'URL après dépôt (voir [diag]) — ciblage à ajuster",
+    );
   }
   await shoot(page, missionId, "record_cree");
   return m[1];
