@@ -229,9 +229,14 @@ export default function Home() {
 
   return (
     <main className="wrap">
-      <div className="brand">
-        <span className="dot" />
-        skan
+      <div className="topbar">
+        <div className="brand">
+          <span className="dot" />
+          skan
+        </div>
+        <a href="/settings" className="modal-link" style={{ marginTop: 0 }}>
+          ⚙️ Settings
+        </a>
       </div>
       <p className="tagline">
         Veille des résidences ARPEJ — alerte Email + WhatsApp + SMS dès qu&apos;une place se libère.
