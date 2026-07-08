@@ -241,45 +241,44 @@ export async function createRecord(
   await killOverlays(page);
   await shoot(page, missionId, "lots_disponibles");
 
-  // Le lien de dépôt pointe vers /records?availability_id=… → on y va directement.
-  const depHref = await cta.getAttribute("href").catch(() => null);
-  if (depHref) {
-    const url = depHref.startsWith("http")
-      ? depHref
-      : IBAIL + (depHref.startsWith("/") ? depHref : "/" + depHref);
-    await page.goto(url, { waitUntil: "domcontentloaded" });
-  } else {
-    await cta.click().catch(async () => {
-      await cta.click({ force: true }).catch(() => {});
-    });
-    await page.waitForLoadState("domcontentloaded").catch(() => {});
-  }
-  await killOverlays(page);
-  await sleep(1500);
+  // Cliquer le lien de dépôt → déclenche la modale de confirmation via le JS iBail.
+  // (NE PAS naviguer vers le href directement : ça court-circuite la modale.)
+  await cta.scrollIntoViewIfNeeded().catch(() => {});
+  await cta.click().catch(async () => {
+    await cta.click({ force: true }).catch(() => {});
+  });
 
-  // Confirmation « Dépôt de dossier — Êtes-vous sûr… » → bouton Oui / Confirmer.
-  const confirm = page
-    .locator("dialog[open], [role=dialog], form, body")
+  // Attendre la modale « Dépôt de dossier — Êtes-vous sûr… »
+  const dialog = page.locator("dialog[open], [role=dialog]").first();
+  await dialog.waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
+  await sleep(800);
+  const dialogVisible = await dialog.isVisible().catch(() => false);
+
+  // Bouton « Oui » (dans la modale si présente, sinon sur la page).
+  const scope = dialogVisible ? dialog : page.locator("body");
+  const oui = scope
     .locator("button, a")
-    .filter({ hasText: /\boui\b|confirmer|valider|d[ée]poser ma demande|je confirme/i })
+    .filter({ hasText: /\boui\b|confirmer|valider|je confirme|d[ée]poser ma demande/i })
     .first();
-  const hasConfirm = await confirm.isVisible().catch(() => false);
-  console.log(`[agent][diag] après lien dépôt: url=${page.url()} confirmVisible=${hasConfirm}`);
-  if (hasConfirm) {
-    await confirm.click().catch(() => {});
+  let confirmClicked = false;
+  if (await oui.isVisible().catch(() => false)) {
+    await oui.click().catch(() => {});
+    confirmClicked = true;
     await page.waitForLoadState("networkidle").catch(() => {});
-  } else {
-    // pas de bouton évident → dump des boutons présents pour calibrer
+  }
+  console.log(
+    `[agent][diag] modale dépôt: url=${page.url()} dialog=${dialogVisible} ouiClicked=${confirmClicked}`,
+  );
+  if (!confirmClicked) {
     const btns = await page
-      .locator("button, a[role=button], input[type=submit]")
+      .locator(
+        "dialog[open] button, dialog[open] a, [role=dialog] button, [role=dialog] a, button, a",
+      )
       .evaluateAll((els) =>
-        els
-          .slice(0, 12)
-          .map((e) => (e.textContent || (e as HTMLInputElement).value || "").trim())
-          .filter(Boolean),
+        els.slice(0, 15).map((e) => (e.textContent || "").trim()).filter(Boolean),
       )
       .catch(() => [] as string[]);
-    console.log("[agent][diag] boutons page confirm:", JSON.stringify(btns));
+    console.log("[agent][diag] cliquables:", JSON.stringify(btns));
   }
   await sleep(2500);
 
