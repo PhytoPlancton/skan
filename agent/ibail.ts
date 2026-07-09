@@ -383,11 +383,24 @@ export async function ensureTenant(
   await humanPause();
   await shoot(page, missionId, "etape1_modale");
   console.log(
-    "[agent][diag] modale candidat:",
-    (await dialog.innerHTML().catch(() => "")).replace(/\s+/g, " ").slice(0, 700),
+    "[agent][diag] modale candidat (1800c):",
+    (await dialog.innerHTML().catch(() => "")).replace(/\s+/g, " ").slice(0, 1800),
   );
+  const els = await dialog
+    .locator("button, a, [role=button], input, select, label")
+    .evaluateAll((ns) =>
+      ns.slice(0, 25).map((e) => {
+        const type = e.getAttribute("type") || "";
+        const txt = ((e as HTMLElement).innerText || (e as HTMLInputElement).value || "")
+          .trim()
+          .slice(0, 30);
+        return `${e.tagName.toLowerCase()}${type ? "[" + type + "]" : ""}:${txt}`;
+      }),
+    )
+    .catch(() => [] as string[]);
+  console.log("[agent][diag] éléments modale candidat:", JSON.stringify(els));
 
-  // <select> de locataires enregistrés → 1re vraie option
+  // <select> éventuel de locataires enregistrés
   const select = dialog.locator("select").first();
   if (await select.isVisible().catch(() => false)) {
     const vals = await select
@@ -400,21 +413,25 @@ export async function ensureTenant(
     await humanPause();
   }
 
-  const confirm = dialog
-    .locator("button, input[type=submit], a")
-    .filter({
-      hasText: /ajouter|valider|s[ée]lectionner|choisir|confirmer|enregistrer|utiliser|associer/i,
-    })
-    .first();
-  if (await confirm.isVisible().catch(() => false)) {
-    await confirm.click().catch(() => {});
-    await sleep(2500);
+  // Avance dans la modale (sélection + éventuels slides « recap ») jusqu'à voir le candidat.
+  for (let step = 0; step < 4; step++) {
+    if ((await page.getByText(/^candidat /i).count().catch(() => 0)) >= 1) break;
+    const adv = dialog
+      .locator("button, a, input[type=submit]")
+      .filter({
+        hasText:
+          /suivant|continuer|valider|ajouter|confirmer|s[ée]lectionner|choisir|utiliser|associer|terminer|enregistrer|c'est parti|commencer|oui/i,
+      })
+      .last();
+    if (!(await adv.isVisible().catch(() => false))) break;
+    await adv.click().catch(() => {});
+    await sleep(2000);
   }
 
   if (!((await page.getByText(/^candidat /i).count().catch(() => 0)) >= 1)) {
     await shoot(page, missionId, "etape1_candidat_absent");
     throw new InterventionError(
-      "étape 1 : candidat non ajouté après réutilisation (voir [diag] modale candidat)",
+      "étape 1 : candidat non ajouté (modale « recap » à calibrer — voir [diag] éléments modale candidat)",
     );
   }
   await shoot(page, missionId, "etape1_candidat_ok");
