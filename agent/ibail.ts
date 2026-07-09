@@ -348,41 +348,74 @@ export async function ensureTenant(
   await page.goto(`${IBAIL}/edition/records/${recordId}/tenants`, {
     waitUntil: "domcontentloaded",
   });
+  await killOverlays(page);
   await humanPause();
 
   // Déjà fait ? (chip « Candidat XX » présent)
-  if (await page.getByText(/^candidat /i).first().isVisible().catch(() => false)) {
+  if ((await page.getByText(/^candidat /i).count().catch(() => 0)) >= 1) {
     await shoot(page, missionId, "etape1_candidat_deja_present");
     return;
   }
 
-  const reuse = page
-    .locator("a, button")
-    .filter({ hasText: /cliquez ici/i })
+  // Lien de réutilisation candidat (modale Turbo record_person_selections, type ≠ Guarantor).
+  const hrefs = await page
+    .locator('a[href*="record_person_selections/new"]')
+    .evaluateAll((els) => els.map((e) => e.getAttribute("href") || ""))
+    .catch(() => [] as string[]);
+  console.log("[agent][diag] liens réutilisation (tenants):", JSON.stringify(hrefs));
+
+  let reuse = page
+    .locator('a[href*="record_person_selections/new"]:not([href*="Guarantor"])')
     .first();
+  if (!(await reuse.isVisible().catch(() => false))) {
+    reuse = page.locator("a").filter({ hasText: /cliquez ici/i }).first();
+  }
   if (!(await reuse.isVisible().catch(() => false))) {
     await shoot(page, missionId, "etape1_lien_reutilisation_introuvable");
     throw new InterventionError("étape 1 : lien « locataires déjà enregistrés » introuvable");
   }
-  await reuse.click();
+  await reuse.click().catch(async () => {
+    await reuse.click({ force: true }).catch(() => {});
+  });
+
+  const dialog = page.locator("dialog[open]").first();
+  await dialog.waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
   await humanPause();
+  await shoot(page, missionId, "etape1_modale");
+  console.log(
+    "[agent][diag] modale candidat:",
+    (await dialog.innerHTML().catch(() => "")).replace(/\s+/g, " ").slice(0, 700),
+  );
 
-  // Modal : sélectionner le premier locataire proposé
-  const pick = page
-    .locator("[role=dialog], .modal, body")
-    .locator("a, button, li")
-    .filter({ hasText: /candidat|locataire|s[ée]lectionner|choisir|utiliser/i })
-    .first();
-  if (!(await pick.isVisible().catch(() => false))) {
-    await shoot(page, missionId, "etape1_selection_introuvable");
-    throw new InterventionError("étape 1 : sélection du locataire enregistré impossible");
+  // <select> de locataires enregistrés → 1re vraie option
+  const select = dialog.locator("select").first();
+  if (await select.isVisible().catch(() => false)) {
+    const vals = await select
+      .locator("option")
+      .evaluateAll((os) =>
+        os.map((o) => (o as HTMLOptionElement).value).filter((v) => v && v.trim() !== ""),
+      )
+      .catch(() => [] as string[]);
+    if (vals[0]) await select.selectOption(vals[0]).catch(() => {});
+    await humanPause();
   }
-  await pick.click();
-  await sleep(2000);
 
-  if (!(await page.getByText(/^candidat /i).first().isVisible().catch(() => false))) {
-    await shoot(page, missionId, "etape1_candidat_absent_apres_reutilisation");
-    throw new InterventionError("étape 1 : le candidat n'apparaît pas après réutilisation");
+  const confirm = dialog
+    .locator("button, input[type=submit], a")
+    .filter({
+      hasText: /ajouter|valider|s[ée]lectionner|choisir|confirmer|enregistrer|utiliser|associer/i,
+    })
+    .first();
+  if (await confirm.isVisible().catch(() => false)) {
+    await confirm.click().catch(() => {});
+    await sleep(2500);
+  }
+
+  if (!((await page.getByText(/^candidat /i).count().catch(() => 0)) >= 1)) {
+    await shoot(page, missionId, "etape1_candidat_absent");
+    throw new InterventionError(
+      "étape 1 : candidat non ajouté après réutilisation (voir [diag] modale candidat)",
+    );
   }
   await shoot(page, missionId, "etape1_candidat_ok");
 }
