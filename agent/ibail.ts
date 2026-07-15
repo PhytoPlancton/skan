@@ -322,6 +322,61 @@ export async function findDraftRecord(page: Page): Promise<string> {
   return m[1];
 }
 
+/**
+ * Ferme le carrousel d'accueil « Bienvenue » (data-controller="recap") qui
+ * s'auto-ouvre sur un nouveau dossier et intercepte tous les clics.
+ * C'est un <dialog> natif → close() le ferme proprement.
+ */
+async function dismissWelcome(page: Page): Promise<void> {
+  const dlg = page.locator("dialog[open]").first();
+  if (!(await dlg.isVisible().catch(() => false))) return;
+  const isRecap = (await dlg.locator('[data-controller="recap"]').count().catch(() => 0)) > 0;
+  if (!isRecap) return;
+  await dlg.evaluate((d) => (d as HTMLDialogElement).close?.()).catch(() => {});
+  await sleep(400);
+  if (await page.locator("dialog[open]").first().isVisible().catch(() => false)) {
+    await page.keyboard.press("Escape").catch(() => {});
+    await sleep(400);
+  }
+}
+
+/**
+ * Dans la modale « Choix d'un candidat / garant » (form record_person_selections) :
+ * sélectionne la 1re personne enregistrée puis clique « Ajouter … ».
+ */
+async function selectAndConfirmPerson(
+  page: Page,
+  missionId: ObjectId | null,
+  kind: string,
+): Promise<void> {
+  const dialog = page.locator("dialog[open]").first();
+  await dialog.waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
+  await humanPause();
+  await shoot(page, missionId, `modale_${kind}`);
+
+  const select = dialog.locator('select[name*="new_record_person_id"], select').first();
+  if (await select.isVisible().catch(() => false)) {
+    const vals = await select
+      .locator("option")
+      .evaluateAll((os) =>
+        os.map((o) => (o as HTMLOptionElement).value).filter((v) => v && v.trim() !== ""),
+      )
+      .catch(() => [] as string[]);
+    if (vals[0]) await select.selectOption(vals[0]).catch(() => {});
+    await humanPause();
+  }
+
+  const confirm = dialog
+    .locator('button[type="submit"], button, input[type="submit"], a')
+    .filter({ hasText: /ajouter|valider|confirmer|enregistrer|s[ée]lectionner|choisir|associer/i })
+    .first();
+  if (await confirm.isVisible().catch(() => false)) {
+    await confirm.click().catch(() => {});
+    await page.waitForLoadState("networkidle").catch(() => {});
+    await sleep(1500);
+  }
+}
+
 /** Navigue vers une étape du dossier via le stepper (libellé exact des captures). */
 async function gotoStep(page: Page, recordId: string, step: RegExp): Promise<void> {
   if (!page.url().includes(`/edition/records/${recordId}`)) {
@@ -330,13 +385,23 @@ async function gotoStep(page: Page, recordId: string, step: RegExp): Promise<voi
     });
     await humanPause();
   }
+  await dismissWelcome(page);
+  // Ferme toute modale résiduelle (sélection candidat/garant) qui intercepterait le clic.
+  const leftover = page.locator("dialog[open]").first();
+  if (await leftover.isVisible().catch(() => false)) {
+    await leftover.evaluate((d) => (d as HTMLDialogElement).close?.()).catch(() => {});
+    await sleep(300);
+  }
   const stepLink = page.locator("a, button, [role=link]").filter({ hasText: step }).first();
   if (!(await stepLink.isVisible().catch(() => false))) {
     throw new InterventionError(`étape ${step} introuvable dans le stepper`);
   }
-  await stepLink.click();
+  await stepLink.click().catch(async () => {
+    await stepLink.click({ force: true }).catch(() => {});
+  });
   await page.waitForLoadState("domcontentloaded");
   await humanPause();
+  await dismissWelcome(page);
 }
 
 /** Étape 1 : réutilise le locataire enregistré (pré-remplit tout, pièces incluses). */
@@ -349,6 +414,7 @@ export async function ensureTenant(
     waitUntil: "domcontentloaded",
   });
   await killOverlays(page);
+  await dismissWelcome(page); // ferme le carrousel « Bienvenue » qui bloque tout
   await humanPause();
 
   // Déjà fait ? (chip « Candidat XX » présent)
@@ -357,19 +423,10 @@ export async function ensureTenant(
     return;
   }
 
-  // Lien de réutilisation candidat (modale Turbo record_person_selections, type ≠ Guarantor).
-  const hrefs = await page
-    .locator('a[href*="record_person_selections/new"]')
-    .evaluateAll((els) => els.map((e) => e.getAttribute("href") || ""))
-    .catch(() => [] as string[]);
-  console.log("[agent][diag] liens réutilisation (tenants):", JSON.stringify(hrefs));
-
-  let reuse = page
+  // Lien de réutilisation candidat (record_person_selections, type ≠ Guarantor).
+  const reuse = page
     .locator('a[href*="record_person_selections/new"]:not([href*="Guarantor"])')
     .first();
-  if (!(await reuse.isVisible().catch(() => false))) {
-    reuse = page.locator("a").filter({ hasText: /cliquez ici/i }).first();
-  }
   if (!(await reuse.isVisible().catch(() => false))) {
     await shoot(page, missionId, "etape1_lien_reutilisation_introuvable");
     throw new InterventionError("étape 1 : lien « locataires déjà enregistrés » introuvable");
@@ -378,61 +435,12 @@ export async function ensureTenant(
     await reuse.click({ force: true }).catch(() => {});
   });
 
-  const dialog = page.locator("dialog[open]").first();
-  await dialog.waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
-  await humanPause();
-  await shoot(page, missionId, "etape1_modale");
-  console.log(
-    "[agent][diag] modale candidat (1800c):",
-    (await dialog.innerHTML().catch(() => "")).replace(/\s+/g, " ").slice(0, 1800),
-  );
-  const els = await dialog
-    .locator("button, a, [role=button], input, select, label")
-    .evaluateAll((ns) =>
-      ns.slice(0, 25).map((e) => {
-        const type = e.getAttribute("type") || "";
-        const txt = ((e as HTMLElement).innerText || (e as HTMLInputElement).value || "")
-          .trim()
-          .slice(0, 30);
-        return `${e.tagName.toLowerCase()}${type ? "[" + type + "]" : ""}:${txt}`;
-      }),
-    )
-    .catch(() => [] as string[]);
-  console.log("[agent][diag] éléments modale candidat:", JSON.stringify(els));
-
-  // <select> éventuel de locataires enregistrés
-  const select = dialog.locator("select").first();
-  if (await select.isVisible().catch(() => false)) {
-    const vals = await select
-      .locator("option")
-      .evaluateAll((os) =>
-        os.map((o) => (o as HTMLOptionElement).value).filter((v) => v && v.trim() !== ""),
-      )
-      .catch(() => [] as string[]);
-    if (vals[0]) await select.selectOption(vals[0]).catch(() => {});
-    await humanPause();
-  }
-
-  // Avance dans la modale (sélection + éventuels slides « recap ») jusqu'à voir le candidat.
-  for (let step = 0; step < 4; step++) {
-    if ((await page.getByText(/^candidat /i).count().catch(() => 0)) >= 1) break;
-    const adv = dialog
-      .locator("button, a, input[type=submit]")
-      .filter({
-        hasText:
-          /suivant|continuer|valider|ajouter|confirmer|s[ée]lectionner|choisir|utiliser|associer|terminer|enregistrer|c'est parti|commencer|oui/i,
-      })
-      .last();
-    if (!(await adv.isVisible().catch(() => false))) break;
-    await adv.click().catch(() => {});
-    await sleep(2000);
-  }
+  // Modale « Choix d'un candidat » : select + « Ajouter le candidat ».
+  await selectAndConfirmPerson(page, missionId, "candidat");
 
   if (!((await page.getByText(/^candidat /i).count().catch(() => 0)) >= 1)) {
     await shoot(page, missionId, "etape1_candidat_absent");
-    throw new InterventionError(
-      "étape 1 : candidat non ajouté (modale « recap » à calibrer — voir [diag] éléments modale candidat)",
-    );
+    throw new InterventionError("étape 1 : candidat non ajouté après réutilisation");
   }
   await shoot(page, missionId, "etape1_candidat_ok");
 }
@@ -459,58 +467,23 @@ export async function ensureGuarantors(
     throw new InterventionError("étape 2 : lien de réutilisation garant introuvable");
   }
 
+  // Ajoute jusqu'à 2 garants (comme les dossiers réels), 1re personne enregistrée à chaque fois.
   for (let attempt = 0; attempt < 2; attempt++) {
-    const dialog = page.locator("dialog[open]").first();
-    if (!(await dialog.isVisible().catch(() => false))) {
-      if (!(await reuse.isVisible().catch(() => false))) break;
-      await reuse.click();
-      await dialog.waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
-      await humanPause();
-    }
-    await shoot(page, missionId, `etape2_modale_${attempt}`);
-
-    // DIAGNOSTIC calibration : structure exacte de la modale (pour finaliser les sélecteurs)
-    const html = (await dialog.innerHTML().catch(() => "")).replace(/\s+/g, " ");
-    console.log(`[agent][diag] modale garant #${attempt} (900c): ${html.slice(0, 900)}`);
-
-    // Cas A : <select> de personnes enregistrées → 1re vraie option
-    const select = dialog.locator("select").first();
-    if (await select.isVisible().catch(() => false)) {
-      const values = await select
-        .locator("option")
-        .evaluateAll((os) =>
-          os.map((o) => (o as HTMLOptionElement).value).filter((v) => v && v.trim() !== ""),
-        )
-        .catch(() => [] as string[]);
-      if (values[0]) {
-        await select.selectOption(values[0]).catch(() => {});
-        await humanPause();
-      }
-    }
-
-    // Bouton de validation de la modale
-    const confirm = dialog
-      .locator("button, input[type=submit], a")
-      .filter({
-        hasText: /ajouter|valider|s[ée]lectionner|choisir|confirmer|enregistrer|utiliser|associer/i,
-      })
-      .first();
-    if (await confirm.isVisible().catch(() => false)) {
-      await confirm.click().catch(() => {});
-      await sleep(2500);
-    } else {
-      break; // pas de bouton évident → on s'arrête et on remonte le diagnostic
-    }
-
-    if ((await page.getByText(/^garant /i).count().catch(() => 0)) >= 1) {
-      await shoot(page, missionId, "etape2_garants_ok");
-      return;
-    }
+    if ((await page.getByText(/^garant /i).count().catch(() => 0)) >= 2) break;
+    if (!(await reuse.isVisible().catch(() => false))) break;
+    await reuse.click().catch(async () => {
+      await reuse.click({ force: true }).catch(() => {});
+    });
+    await selectAndConfirmPerson(page, missionId, `garant${attempt}`);
   }
 
+  if ((await page.getByText(/^garant /i).count().catch(() => 0)) >= 1) {
+    await shoot(page, missionId, "etape2_garants_ok");
+    return;
+  }
   await shoot(page, missionId, "etape2_garants_reutilisation_echec");
   throw new InterventionError(
-    "étape 2 : réutilisation garant à calibrer — copie-moi la ligne de log « [diag] modale garant » (ou complète les garants sur iBail puis re-GO)",
+    "étape 2 : réutilisation garant impossible — complète les garants sur iBail puis re-GO",
   );
 }
 
@@ -524,18 +497,23 @@ export async function checkDocuments(
   await shoot(page, missionId, "etape3_pieces");
 
   const content = await page.locator("body").innerText();
-  // Sections « ...* » suivies (ou non) d'un « Document 1 : »
+  // Catégories « ...* » — on ne garde QUE les vraies zones d'upload (« fichiers » / « Ajouter »),
+  // pas les libellés de champ type « Type de garant* ».
   const blocks = content.split(/\n(?=[A-ZÀ-Ü][^\n]{10,120}\*)/);
   const missing: string[] = [];
   for (const b of blocks) {
     const title = b.split("\n")[0]?.trim();
     if (!title || !title.includes("*")) continue;
-    if (!/document\s*1/i.test(b)) missing.push(title.replace(/\s*\*\s*$/, ""));
+    if (!/fichier|ajouter/i.test(b)) continue;
+    if (!/document\s*\d/i.test(b)) missing.push(title.replace(/\s*\*\s*$/, ""));
   }
+  // Non bloquant : la réutilisation reporte les pièces ; le lien de revue GO est le filet humain.
   if (missing.length > 0) {
-    throw new InterventionError(
-      `étape 3 : pièces obligatoires manquantes → ${missing.slice(0, 4).join(" · ")}`,
+    console.warn(
+      `[agent] ⚠️ pièces à vérifier (potentiellement manquantes) : ${missing.slice(0, 6).join(" · ")}`,
     );
+  } else {
+    console.log("[agent] pièces : toutes les catégories obligatoires ont un document ✓");
   }
 }
 
