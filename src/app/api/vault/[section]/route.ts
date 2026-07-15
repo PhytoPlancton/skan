@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // Seules les sections éditables par l'UI — la session iBail reste interne à l'agent.
-const EDITABLE = new Set(["guarantors", "applicationProfile"]);
+const EDITABLE = new Set(["guarantors", "applicationProfile", "reservationCodes"]);
 
 function guard(section: string): Response | null {
   if (!authConfigured()) {

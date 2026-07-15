@@ -27,6 +27,7 @@ import type { ApplicationProfile } from "../src/lib/vault.ts";
 import { getDb } from "../src/lib/db.ts";
 import {
   InterventionError,
+  NeedsReservationCode,
   SkipMission,
   checkDocuments,
   createRecord,
@@ -53,6 +54,15 @@ async function loadProfile(): Promise<ApplicationProfile> {
   return { ...DEFAULT_PROFILE, ...(p ?? {}) };
 }
 
+/** Code de réservation (contingent réservataire) pour cette résidence, si enregistré. */
+async function getReservationCode(slug: string): Promise<string | null> {
+  const codes = await getVaultSection<Record<string, string>>("reservationCodes").catch(
+    () => null,
+  );
+  const c = codes?.[slug];
+  return c && c.trim() ? c.trim() : null;
+}
+
 /**
  * La place est-elle encore réellement disponible ? (garde utile quand l'agent
  * tourne sur un PC non-24/7 : une mission peut avoir vieilli pendant l'arrêt.)
@@ -70,9 +80,10 @@ async function stillAvailable(slug: string): Promise<boolean> {
 /** Prépare le dossier complet (étapes 1→4) sans soumettre. Renvoie le recordId. */
 async function prepare(mission: MissionDoc): Promise<string> {
   const profile = await loadProfile();
+  const reservationCode = await getReservationCode(mission.slug);
   return withBrowser(async (ctx, page) => {
     await ensureLoggedIn(ctx, page, mission._id!);
-    const recordId = await createRecord(page, mission.link, mission._id!);
+    const recordId = await createRecord(page, mission.link, mission._id!, reservationCode);
     await updateMission(mission._id!, { ibailRecordId: recordId }, "record_created", recordId);
     await ensureTenant(page, recordId, mission._id!);
     await ensureGuarantors(page, recordId, mission._id!);
@@ -85,10 +96,12 @@ async function prepare(mission: MissionDoc): Promise<string> {
 /** Soumet un dossier préparé (après GO ou en full-auto). */
 async function submit(mission: MissionDoc): Promise<void> {
   const profile = await loadProfile();
+  const reservationCode = await getReservationCode(mission.slug);
   await withBrowser(async (ctx, page) => {
     await ensureLoggedIn(ctx, page, mission._id!);
     const recordId =
-      mission.ibailRecordId ?? (await createRecord(page, mission.link, mission._id!));
+      mission.ibailRecordId ??
+      (await createRecord(page, mission.link, mission._id!, reservationCode));
     // Re-vérification complète avant l'action irréversible (DOM a pu changer)
     await ensureTenant(page, recordId, mission._id!);
     await ensureGuarantors(page, recordId, mission._id!);
@@ -180,6 +193,13 @@ async function handleFailure(mission: MissionDoc, err: unknown): Promise<void> {
   if (err instanceof SkipMission) {
     await updateMission(id, { status: "skipped", reason: err.message }, "skipped", err.message);
     console.log(`[agent] mission ${id} skipped: ${err.message}`);
+    // Le cas « code de réservation » est actionnable → on prévient (1×/jour via idempotence).
+    if (err instanceof NeedsReservationCode) {
+      await notifyText(
+        `🔐 skan — ${mission.title} : ${err.message} → Settings, champ « Code résa » de la résidence.`,
+        `skan — code de réservation requis : ${mission.title}`,
+      );
+    }
     return;
   }
   if (err instanceof InterventionError) {

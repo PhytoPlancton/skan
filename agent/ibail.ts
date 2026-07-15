@@ -24,6 +24,8 @@ const IBAIL = "https://ibail.arpej.fr";
 export class InterventionError extends Error {}
 /** Mission sans objet (ex. dossier déjà en cours pour ce lot). */
 export class SkipMission extends Error {}
+/** Dépôt bloqué faute de code de réservation valide (contingent réservataire). */
+export class NeedsReservationCode extends SkipMission {}
 
 const rand = (min: number, max: number) => min + Math.random() * (max - min);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -178,6 +180,7 @@ export async function createRecord(
   page: Page,
   residenceLink: string,
   missionId: ObjectId | null,
+  reservationCode?: string | null,
 ): Promise<string> {
   // Snapshot AVANT dépôt : le nouveau dossier sera l'id « en plus ».
   // Garantit qu'on ne cible JAMAIS un dossier existant (EOLE, etc.).
@@ -253,6 +256,71 @@ export async function createRecord(
   await dialog.waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
   await sleep(800);
   const dialogVisible = await dialog.isVisible().catch(() => false);
+
+  // ── Cas « contingent réservataire » ────────────────────────────────
+  // Certains logements sont réservés (école / CROUS / employeur partenaire) :
+  // le dépôt exige un CODE DE RÉSERVATION (6 cases). On ne DEVINE JAMAIS un code
+  // (risque de blocage du compte). Sans code enregistré → skip motivé + alerte.
+  const codeScope = dialogVisible ? dialog : page.locator("body");
+  const codeBoxes = codeScope.locator('input[name^="booking_code"]');
+  const nBoxes = await codeBoxes.count().catch(() => 0);
+  const looksContingent =
+    nBoxes > 0 ||
+    (await codeScope
+      .getByText(/code de r[ée]servation|contingent r[ée]servataire/i)
+      .first()
+      .isVisible()
+      .catch(() => false));
+  if (looksContingent) {
+    await shoot(page, missionId, "code_reservation_requis");
+    const code = (reservationCode ?? "").replace(/\s+/g, "");
+    if (!code) {
+      throw new NeedsReservationCode(
+        "logement « contingent réservataire » : code de réservation requis (aucun " +
+          "code enregistré dans Settings). skan continue de surveiller et d'alerter, " +
+          "mais ne peut pas déposer sans code.",
+      );
+    }
+    console.log(`[agent] contingent réservataire → saisie du code (${nBoxes || 1} case(s))`);
+    if (nBoxes >= 2) {
+      const chars = code.split("");
+      if (chars.length !== nBoxes) {
+        throw new NeedsReservationCode(
+          `code de réservation de ${chars.length} caractère(s) mais ${nBoxes} cases ` +
+            `attendues — corrige-le dans Settings.`,
+        );
+      }
+      for (let i = 0; i < nBoxes; i++) {
+        await codeBoxes.nth(i).fill(chars[i]).catch(() => {});
+        await sleep(rand(90, 240));
+      }
+    } else {
+      await codeBoxes.first().fill(code).catch(() => {});
+    }
+    await humanPause();
+    await codeScope
+      .getByRole("button", { name: /je d[ée]pose mon dossier|valider|confirmer/i })
+      .first()
+      .click()
+      .catch(() => {});
+    await page.waitForLoadState("networkidle").catch(() => {});
+    await sleep(2500);
+    if (
+      await page
+        .getByText(/code (invalide|incorrect|erron|non reconnu)|code.*existe pas/i)
+        .first()
+        .isVisible()
+        .catch(() => false)
+    ) {
+      await shoot(page, missionId, "code_reservation_refuse");
+      throw new NeedsReservationCode(
+        "code de réservation refusé par iBail — vérifie-le dans Settings (aucune " +
+          "nouvelle tentative automatique, pour ne pas bloquer le compte).",
+      );
+    }
+    console.log("[agent] code de réservation accepté → poursuite du dépôt");
+    // La suite (bouton « Oui » éventuel + diff avant/après) prend le relais.
+  }
 
   // Bouton « Oui » (dans la modale si présente, sinon sur la page).
   const scope = dialogVisible ? dialog : page.locator("body");

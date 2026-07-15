@@ -93,6 +93,7 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [profile, setProfile] = useState<Profile>(EMPTY_PROFILE);
   const [guarantors, setGuarantors] = useState<Guarantor[]>([]);
+  const [resCodes, setResCodes] = useState<Record<string, string>>({});
   const [residences, setResidences] = useState<ResidenceItem[]>([]);
   const [vaultReady, setVaultReady] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -113,9 +114,10 @@ export default function SettingsPage() {
       if (r.ok) setResidences((await r.json()).items ?? []);
       setVaultReady(v.ok);
       if (v.ok) {
-        const [p, g] = await Promise.all([
+        const [p, g, c] = await Promise.all([
           fetch("/api/vault/applicationProfile", { cache: "no-store" }),
           fetch("/api/vault/guarantors", { cache: "no-store" }),
+          fetch("/api/vault/reservationCodes", { cache: "no-store" }),
         ]);
         if (p.ok) {
           const pv = (await p.json()).value;
@@ -124,6 +126,10 @@ export default function SettingsPage() {
         if (g.ok) {
           const gv = (await g.json()).value;
           if (Array.isArray(gv) && gv.length) setGuarantors(gv);
+        }
+        if (c.ok) {
+          const cv = (await c.json()).value;
+          if (cv && typeof cv === "object") setResCodes(cv);
         }
       }
       setError(null);
@@ -151,7 +157,7 @@ export default function SettingsPage() {
       if (!res.ok) throw new Error(json.error ?? "Sauvegarde settings impossible");
       setSettings(json.settings);
       if (vaultReady) {
-        const [p, g] = await Promise.all([
+        const [p, g, c] = await Promise.all([
           fetch("/api/vault/applicationProfile", {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
@@ -162,8 +168,13 @@ export default function SettingsPage() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ value: guarantors }),
           }),
+          fetch("/api/vault/reservationCodes", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ value: resCodes }),
+          }),
         ]);
-        if (!p.ok || !g.ok) throw new Error("Sauvegarde du coffre impossible");
+        if (!p.ok || !g.ok || !c.ok) throw new Error("Sauvegarde du coffre impossible");
       }
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
@@ -327,10 +338,25 @@ export default function SettingsPage() {
                     }
                   />
                 )}
+                {st.mode !== "off" && (
+                  <input
+                    className="rent-input"
+                    placeholder="Code résa (si réservé)"
+                    title="Logement « contingent réservataire » : code fourni par l'école/CROUS/employeur. Laisse vide si le logement est en accès libre."
+                    value={resCodes[r.slug] ?? ""}
+                    onChange={(e) =>
+                      setResCodes((c) => ({ ...c, [r.slug]: e.target.value }))
+                    }
+                  />
+                )}
               </div>
             );
           })}
         </div>
+        <p className="hint">
+          « Code résa » : à remplir seulement si le logement est un{" "}
+          <b>contingent réservataire</b> (accès sur code). Stocké chiffré. Vide = accès libre.
+        </p>
       </section>
 
       {/* Cadence & plafonds */}
