@@ -1,24 +1,14 @@
-import { authConfigured } from "@/lib/auth";
+import { requireUser } from "@/lib/current-user";
 import { getSettings, saveSettings } from "@/lib/settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function guard(): Response | null {
-  if (!authConfigured()) {
-    return Response.json(
-      { error: "Configure AUTH_SECRET + AUTH_PASSWORD_HASH avant d'utiliser les settings" },
-      { status: 403 },
-    );
-  }
-  return null;
-}
-
 export async function GET() {
-  const blocked = guard();
-  if (blocked) return blocked;
+  const g = await requireUser();
+  if (g.error) return g.error;
   try {
-    return Response.json({ settings: await getSettings() });
+    return Response.json({ settings: await getSettings(g.user._id) });
   } catch (err) {
     console.error("[api/settings GET]", err);
     return Response.json({ error: "Erreur base de données" }, { status: 500 });
@@ -26,11 +16,11 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
-  const blocked = guard();
-  if (blocked) return blocked;
+  const g = await requireUser();
+  if (g.error) return g.error;
   try {
     const body = await req.json();
-    const settings = await saveSettings(body?.settings ?? {});
+    const settings = await saveSettings(g.user._id, body?.settings ?? {});
     return Response.json({ ok: true, settings });
   } catch (err) {
     console.error("[api/settings PUT]", err);

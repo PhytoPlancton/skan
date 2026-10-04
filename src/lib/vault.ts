@@ -1,6 +1,7 @@
 /**
  * Coffre : sections JSON chiffrées AES-256-GCM, stockées dans Mongo (`vault`).
- * Une section = un blob opaque { _id, data(base64 chiffré), updatedAt }.
+ * Une section = un blob opaque { _id: "<userId>:<section>", userId, data, updatedAt },
+ * chiffré avec la clé propre à l'utilisateur (dérivée de VAULT_KEY).
  *
  * Sections utilisées :
  *  - "guarantors"          : Guarantor[] (tous les champs iBail des garants)
@@ -8,7 +9,7 @@
  *  - "ibailSession"        : storageState Playwright (cookies iBail) — écrit par l'agent
  */
 import { getDb } from "./db";
-import { decryptJson, encryptJson } from "./crypto";
+import { decryptJson, encryptJson, userKey } from "./crypto";
 
 const VAULT = "vault";
 
@@ -58,32 +59,54 @@ export interface ApplicationProfile {
   entryDateFloor: string;
 }
 
-export async function getVaultSection<T>(section: string): Promise<T | null> {
-  const db = await getDb();
-  const doc = await db
-    .collection<{ _id: string; data: string }>(VAULT)
-    .findOne({ _id: section });
-  if (!doc) return null;
-  return decryptJson<T>(doc.data);
+interface VaultDoc {
+  _id: string; // `${userId}:${section}`
+  userId: string;
+  section: string;
+  data: string;
+  updatedAt: Date;
 }
 
-export async function setVaultSection(section: string, value: unknown): Promise<void> {
+const docId = (userId: string, section: string) => `${userId}:${section}`;
+
+/** Lit une section du coffre d'un utilisateur (déchiffrée avec SA clé). */
+export async function getVaultSection<T>(userId: string, section: string): Promise<T | null> {
   const db = await getDb();
-  await db.collection<{ _id: string; data: string; updatedAt: Date }>(VAULT).updateOne(
-    { _id: section },
-    { $set: { data: encryptJson(value), updatedAt: new Date() } },
+  const doc = await db
+    .collection<VaultDoc>(VAULT)
+    .findOne({ _id: docId(userId, section), userId });
+  if (!doc) return null;
+  return decryptJson<T>(doc.data, userKey(userId));
+}
+
+export async function setVaultSection(
+  userId: string,
+  section: string,
+  value: unknown,
+): Promise<void> {
+  const db = await getDb();
+  await db.collection<VaultDoc>(VAULT).updateOne(
+    { _id: docId(userId, section) },
+    {
+      $set: {
+        userId,
+        section,
+        data: encryptJson(value, userKey(userId)),
+        updatedAt: new Date(),
+      },
+    },
     { upsert: true },
   );
 }
 
 /** Métadonnées non sensibles pour l'UI (existence + fraîcheur, jamais le contenu). */
-export async function vaultStatus(): Promise<
-  Array<{ section: string; updatedAt: Date | null }>
-> {
+export async function vaultStatus(
+  userId: string,
+): Promise<Array<{ section: string; updatedAt: Date | null }>> {
   const db = await getDb();
   const docs = await db
-    .collection<{ _id: string; updatedAt?: Date }>(VAULT)
-    .find({}, { projection: { _id: 1, updatedAt: 1 } })
+    .collection<VaultDoc>(VAULT)
+    .find({ userId }, { projection: { section: 1, updatedAt: 1 } })
     .toArray();
-  return docs.map((d) => ({ section: d._id, updatedAt: d.updatedAt ?? null }));
+  return docs.map((d) => ({ section: d.section, updatedAt: d.updatedAt ?? null }));
 }

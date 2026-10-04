@@ -11,11 +11,8 @@ import {
   type Locator,
   type Page,
 } from "playwright";
-import type { ObjectId } from "mongodb";
-
-import { getVaultSection, setVaultSection } from "../src/lib/vault.ts";
 import type { ApplicationProfile } from "../src/lib/vault.ts";
-import { saveScreenshot } from "../src/lib/screenshots.ts";
+import { api } from "./api.ts";
 import { fetchMagicLink, MailboxAuthError } from "./mailbox.ts";
 
 const IBAIL = "https://ibail.arpej.fr";
@@ -36,14 +33,17 @@ export interface AgentRun<T> {
   (ctx: BrowserContext, page: Page): Promise<T>;
 }
 
-/** Ouvre un navigateur avec la session iBail persistée (coffre). */
+/** Identifiant de mission côté API (null = calibration, hors mission). */
+type MissionId = string | null;
+
+/** Ouvre un navigateur avec la session iBail persistée (coffre, via l'API skan). */
 export async function withBrowser<T>(fn: AgentRun<T>): Promise<T> {
   const browser: Browser = await chromium.launch({
     headless: true,
     slowMo: 60,
   });
   try {
-    const state = await getVaultSection<object>("ibailSession").catch(() => null);
+    const state = await api.getVault<object>("ibailSession").catch(() => null);
     const ctx = await browser.newContext({
       storageState: (state as never) ?? undefined,
       locale: "fr-FR",
@@ -58,10 +58,10 @@ export async function withBrowser<T>(fn: AgentRun<T>): Promise<T> {
   }
 }
 
-async function shoot(page: Page, missionId: ObjectId | null, step: string): Promise<void> {
+async function shoot(page: Page, missionId: MissionId, step: string): Promise<void> {
   try {
     const png = await page.screenshot({ fullPage: false });
-    await saveScreenshot(missionId, step, png);
+    await api.screenshot(missionId, step, png);
   } catch (e) {
     console.error("[agent] screenshot:", (e as Error).message);
   }
@@ -80,7 +80,7 @@ async function isLoggedIn(page: Page): Promise<boolean> {
 export async function ensureLoggedIn(
   ctx: BrowserContext,
   page: Page,
-  missionId: ObjectId | null,
+  missionId: MissionId,
 ): Promise<void> {
   await page.goto(`${IBAIL}/records`, { waitUntil: "domcontentloaded" });
   await humanPause();
@@ -132,7 +132,7 @@ export async function ensureLoggedIn(
     await shoot(page, missionId, "login_echec");
     throw new InterventionError("connexion via magic link échouée (page après lien inattendue)");
   }
-  await setVaultSection("ibailSession", await ctx.storageState());
+  await api.putVault("ibailSession", await ctx.storageState());
   console.log("[agent] session iBail régénérée et persistée ✓");
 }
 
@@ -179,7 +179,7 @@ async function listRecordIds(page: Page): Promise<Set<string>> {
 export async function createRecord(
   page: Page,
   residenceLink: string,
-  missionId: ObjectId | null,
+  missionId: MissionId,
   reservationCode?: string | null,
 ): Promise<string> {
   // Snapshot AVANT dépôt : le nouveau dossier sera l'id « en plus ».
@@ -414,7 +414,7 @@ async function dismissWelcome(page: Page): Promise<void> {
  */
 async function selectAndConfirmPerson(
   page: Page,
-  missionId: ObjectId | null,
+  missionId: MissionId,
   kind: string,
 ): Promise<void> {
   const dialog = page.locator("dialog[open]").first();
@@ -476,7 +476,7 @@ async function gotoStep(page: Page, recordId: string, step: RegExp): Promise<voi
 export async function ensureTenant(
   page: Page,
   recordId: string,
-  missionId: ObjectId | null,
+  missionId: MissionId,
 ): Promise<void> {
   await page.goto(`${IBAIL}/edition/records/${recordId}/tenants`, {
     waitUntil: "domcontentloaded",
@@ -517,7 +517,7 @@ export async function ensureTenant(
 export async function ensureGuarantors(
   page: Page,
   recordId: string,
-  missionId: ObjectId | null,
+  missionId: MissionId,
 ): Promise<void> {
   await gotoStep(page, recordId, /garant/i);
 
@@ -559,7 +559,7 @@ export async function ensureGuarantors(
 export async function checkDocuments(
   page: Page,
   recordId: string,
-  missionId: ObjectId | null,
+  missionId: MissionId,
 ): Promise<void> {
   await gotoStep(page, recordId, /pi[èe]ces justificatives/i);
   await shoot(page, missionId, "etape3_pieces");
@@ -652,7 +652,7 @@ export async function prepareReservation(
   page: Page,
   recordId: string,
   profile: ApplicationProfile,
-  missionId: ObjectId | null,
+  missionId: MissionId,
 ): Promise<void> {
   await gotoStep(page, recordId, /demande de r[ée]servation/i);
   await shoot(page, missionId, "etape4_avant");
@@ -727,7 +727,7 @@ export async function prepareReservation(
 export async function submitReservation(
   page: Page,
   recordId: string,
-  missionId: ObjectId | null,
+  missionId: MissionId,
 ): Promise<void> {
   await gotoStep(page, recordId, /demande de r[ée]servation/i);
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { UserMenu } from "./user-menu";
 
 interface Item {
   slug: string;
@@ -269,9 +270,13 @@ export default function Home() {
           <span className="dot" />
           skan
         </div>
-        <a href="/settings" className="modal-link" style={{ marginTop: 0 }}>
-          ⚙️ Settings
-        </a>
+        <UserMenu
+          links={
+            <a href="/settings" className="modal-link" style={{ marginTop: 0 }}>
+              ⚙️ Settings
+            </a>
+          }
+        />
       </div>
       <p className="tagline">
         Veille des résidences ARPEJ — alerte Email + WhatsApp + SMS dès qu&apos;une place se libère.

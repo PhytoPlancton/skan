@@ -1,9 +1,4 @@
-/** Authentification simple par secret partagé (header x-cron-secret ou Bearer). */
-
-/** L'auth par mot de passe de l'app est-elle configurée ? (middleware actif) */
-export function authConfigured(): boolean {
-  return !!process.env.AUTH_SECRET && !!process.env.AUTH_PASSWORD_HASH;
-}
+/** Authentification par secret partagé CRON_SECRET (header x-cron-secret ou Bearer). */
 
 function provided(req: Request): string | null {
   return (

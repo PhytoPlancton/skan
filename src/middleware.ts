@@ -1,9 +1,10 @@
 /**
- * Protection globale de l'app par cookie de session signé.
- * - Auth non configurée (AUTH_SECRET/AUTH_PASSWORD_HASH absents) : tout passe
- *   (rétro-compat v0.2) — mais les routes sensibles (vault/settings) exigent
- *   elles-mêmes une auth configurée.
- * - Exemptions : login, health, cron (secret dédié), test-notify (secret), /go/* (token signé).
+ * Protection globale de l'app par cookie de session signé (porte l'identifiant utilisateur).
+ * - AUTH_SECRET absent : l'app refuse tout (sauf login/health) — impossible de
+ *   savoir à qui appartiennent les données sans session.
+ * - Exemptions : login, health, cron (secret dédié), test-notify (secret), /go/* (token signé),
+ *   /api/agent/* (jeton d'agent personnel, vérifié par chaque route).
+ * Le middleware ne fait que filtrer : chaque route re-vérifie l'utilisateur (requireUser).
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySessionValue } from "@/lib/session";
@@ -16,23 +17,24 @@ const PUBLIC_PREFIXES = [
   "/api/test-notify",
   "/go/",
   "/api/go/",
+  "/api/agent/",
 ];
 
 export async function middleware(req: NextRequest) {
-  const secret = process.env.AUTH_SECRET;
-  const hash = process.env.AUTH_PASSWORD_HASH;
-  if (!secret || !hash) return NextResponse.next();
-
   const { pathname } = req.nextUrl;
   if (PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(p))) {
     return NextResponse.next();
   }
 
+  const secret = process.env.AUTH_SECRET;
   const cookie = req.cookies.get(SESSION_COOKIE)?.value;
-  if (await verifySessionValue(cookie, secret)) return NextResponse.next();
+  if (secret && (await verifySessionValue(cookie, secret))) return NextResponse.next();
 
   if (pathname.startsWith("/api/")) {
-    return NextResponse.json({ error: "authentification requise" }, { status: 401 });
+    return NextResponse.json(
+      { error: secret ? "authentification requise" : "AUTH_SECRET manquant" },
+      { status: secret ? 401 : 503 },
+    );
   }
   const url = req.nextUrl.clone();
   url.pathname = "/login";

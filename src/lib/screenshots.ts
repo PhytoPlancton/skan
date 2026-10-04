@@ -4,47 +4,53 @@
  */
 import { ObjectId } from "mongodb";
 import { getDb } from "./db";
-import { decryptBuffer, encryptBuffer } from "./crypto";
+import { decryptBuffer, encryptBuffer, userKey } from "./crypto";
 
 const COLL = "screenshots";
 
 export interface ScreenshotMeta {
   _id: ObjectId;
+  userId: string;
   missionId: ObjectId | null;
   step: string;
   createdAt: Date;
 }
 
 export async function saveScreenshot(
+  userId: string,
   missionId: ObjectId | null,
   step: string,
   png: Buffer,
 ): Promise<ObjectId> {
   const db = await getDb();
   const res = await db.collection(COLL).insertOne({
+    userId,
     missionId,
     step,
-    data: encryptBuffer(png),
+    // enc « user » : chiffré avec la clé de l'utilisateur (les anciennes captures : clé maître)
+    enc: "user",
+    data: encryptBuffer(png, userKey(userId)),
     createdAt: new Date(),
   });
   return res.insertedId;
 }
 
-export async function getScreenshot(id: string): Promise<Buffer | null> {
+export async function getScreenshot(userId: string, id: string): Promise<Buffer | null> {
   if (!ObjectId.isValid(id)) return null;
   const db = await getDb();
   const doc = await db
-    .collection<{ data: string }>(COLL)
-    .findOne({ _id: new ObjectId(id) } as never);
-  return doc ? decryptBuffer(doc.data) : null;
+    .collection<{ data: string; enc?: string }>(COLL)
+    .findOne({ _id: new ObjectId(id), userId } as never);
+  if (!doc) return null;
+  return doc.enc === "user" ? decryptBuffer(doc.data, userKey(userId)) : decryptBuffer(doc.data);
 }
 
-export async function listScreenshots(missionId: string): Promise<ScreenshotMeta[]> {
+export async function listScreenshots(userId: string, missionId: string): Promise<ScreenshotMeta[]> {
   if (!ObjectId.isValid(missionId)) return [];
   const db = await getDb();
   return db
     .collection<ScreenshotMeta>(COLL)
-    .find({ missionId: new ObjectId(missionId) } as never, {
+    .find({ userId, missionId: new ObjectId(missionId) } as never, {
       projection: { data: 0 },
     })
     .sort({ createdAt: 1 })

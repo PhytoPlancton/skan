@@ -1,4 +1,4 @@
-import { authConfigured } from "@/lib/auth";
+import { requireUser } from "@/lib/current-user";
 import { vaultConfigured } from "@/lib/crypto";
 import { vaultStatus } from "@/lib/vault";
 
@@ -6,12 +6,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  if (!authConfigured()) {
-    return Response.json(
-      { error: "Configure AUTH_SECRET + AUTH_PASSWORD_HASH avant d'utiliser le coffre" },
-      { status: 403 },
-    );
-  }
+  const g = await requireUser();
+  if (g.error) return g.error;
   if (!vaultConfigured()) {
     return Response.json(
       { error: "VAULT_KEY manquante (openssl rand -hex 32)", configured: false },
@@ -19,7 +15,7 @@ export async function GET() {
     );
   }
   try {
-    const sections = await vaultStatus();
+    const sections = await vaultStatus(g.user._id);
     return Response.json({ configured: true, sections });
   } catch (err) {
     console.error("[api/vault]", err);

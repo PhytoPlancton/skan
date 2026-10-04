@@ -8,6 +8,8 @@ choix et alerte sur **Email + WhatsApp + SMS** (API EDJ Labs) dès qu'une place 
   (ex. Eole) ajoutées par URL/slug
 - Détection par transition `indisponible → disponible` (anti-spam : une alerte par ouverture)
 - Polling interne toutes les 5 min (configurable)
+- **Multi-utilisateur** : chaque compte a ses surveillances, réglages, garants (chiffrés
+  avec sa propre clé), missions, alertes et son propre agent
 
 ## Comment ça marche
 
@@ -49,11 +51,16 @@ Pour tester sans envoyer de vrais messages : `NOTIFY_DRY_RUN=1`.
 | `EDJ_WA_TOKEN` | token API WhatsApp |
 | `EDJ_EMAIL_TOKEN` | token API Emailing |
 | `EDJ_EMAIL_ENDPOINT` | endpoint email EDJ Labs (déf. `/email/send`) |
-| `NOTIFY_PHONE` | numéro destinataire E.164 (ex. `+33…`) |
-| `NOTIFY_EMAIL` | email destinataire |
+| `NOTIFY_PHONE` | téléphone E.164 du compte admin créé au 1er démarrage (ensuite : par compte, dans Settings) |
+| `NOTIFY_EMAIL` | email du compte admin créé au 1er démarrage (idem) |
 | `ENABLED_CHANNELS` | `sms,whatsapp,email` |
 | `POLL_INTERVAL_MIN` | minutes entre deux checks (déf. 5) |
 | `CRON_SECRET` | protège `POST /api/cron/check` et `/api/test-notify` |
+| `AUTH_SECRET` | **obligatoire** — signe les cookies de session (`openssl rand -hex 32`) |
+| `ADMIN_USERNAME` | identifiant du 1er compte admin (déf. `admin`) — utilisé une seule fois |
+| `AUTH_PASSWORD_HASH` | mot de passe du 1er compte admin (`npm run hash-password`) — utilisé une seule fois |
+| `VAULT_KEY` | clé maître du coffre (`openssl rand -hex 32`) — une clé par utilisateur en est dérivée |
+| `PUBLIC_APP_URL` | URL publique pour les liens GO (déf. : déduite de la requête) |
 
 > ⚠️ **Secrets** : jamais commités. Injectés via les *Environment Variables* du stack EDJ Labs.
 
@@ -65,7 +72,10 @@ Pour tester sans envoyer de vrais messages : `NOTIFY_DRY_RUN=1`.
 | `GET /api/watches` · `POST /api/watches` · `DELETE /api/watches/:slug` | gestion des surveillances |
 | `GET /api/alerts` | historique des alertes |
 | `POST /api/cron/check` | déclenche un check (header `x-cron-secret`) |
-| `POST /api/test-notify` | envoi de test sur tous les canaux (header `x-cron-secret`) |
+| `POST /api/test-notify` | envoi de test à soi-même (connecté) ou à `?user=` (header `x-cron-secret`) |
+| `GET/PATCH /api/me` · `POST /api/me/password` · `POST/DELETE /api/me/agent-token` | mon compte, mot de passe, jeton d'agent |
+| `GET/POST /api/admin/users` · `PATCH/DELETE /api/admin/users/:id` | gestion des comptes (admin) |
+| `/api/agent/*` | API de l'agent (header `Authorization: Bearer <jeton>`), limitée aux données de son propriétaire |
 | `GET /api/health` | healthcheck |
 
 ## Déploiement (GitHub → GHCR → EDJ Labs → Cloudflare)
@@ -101,27 +111,50 @@ traefik.http.routers.NOM-COMPLET-DU-STACK-http.middlewares           = redirect-
 
 ## v2 — Auto-candidature (login skan + agent iBail)
 
-### Auth de l'app (obligatoire dès qu'on stocke des données perso)
-1. Générer le hash : `npm run hash-password -- 'ton-mot-de-passe'`
-2. Sur le stack web `skan`, ajouter : `AUTH_PASSWORD_HASH=…`, `AUTH_SECRET=$(openssl rand -hex 32)`,
-   `VAULT_KEY=$(openssl rand -hex 32)`.
-3. Redéployer → l'app demande le mot de passe. `/settings` et le coffre deviennent accessibles.
+### Comptes (multi-utilisateur)
+Chaque personne a son compte : identifiant + mot de passe, ses surveillances, ses réglages,
+ses garants (chiffrés avec une clé propre au compte, dérivée de `VAULT_KEY`), ses missions,
+ses alertes (vers SON téléphone/email) et son agent. La vérification ARPEJ est faite une seule
+fois pour tout le monde.
 
-> ⚠️ `VAULT_KEY` déchiffre garants/session iBail : sauvegarde-la, sa perte = coffre illisible.
+**Premier démarrage / passage depuis la version mono-utilisateur** (automatique) :
+1. Sur le stack web, garder `AUTH_SECRET`, `AUTH_PASSWORD_HASH`, `VAULT_KEY`, `NOTIFY_*` et ajouter
+   `ADMIN_USERNAME=<ton identifiant>` (ex. `nico`).
+2. Redéployer. Au démarrage, skan crée le compte admin (`ADMIN_USERNAME` + le mot de passe actuel)
+   et lui rattache **toutes les données existantes** (surveillances, alertes, missions, réglages,
+   coffre re-chiffré avec la clé du compte). Logs : `[bootstrap]` / `[migration]`.
+3. Se connecter avec l'identifiant + le mot de passe habituel.
+
+**Ajouter quelqu'un** : page **👥 Comptes** (`/admin`, admin uniquement) → identifiant + mot de passe
+provisoire → transmettre l'URL et les identifiants. La personne change son mot de passe et renseigne
+son téléphone/email dans **Settings → Mon compte**, puis génère son jeton dans **Settings → Mon agent**.
+
+Garde-fous : un compte ne voit jamais les données d'un autre (filtrage serveur + clé de coffre
+propre) · plafond SMS/WhatsApp par jour et par compte (défaut 30, réglable dans `/admin`, l'admin
+est illimité) · désactiver un compte coupe sa session et son agent · supprimer un compte efface
+toutes ses données. En CLI : `npm run create-user -- <identifiant> <mot-de-passe> [admin]`.
+
+> ⚠️ `VAULT_KEY` déchiffre garants/session iBail de TOUS les comptes : sauvegarde-la, sa perte =
+> coffres illisibles. Elle reste sur le serveur (l'agent n'en a pas besoin).
 
 ### Gmail app password (lecture des magic links iBail)
 1. compte Google → **Sécurité** → activer la **validation en 2 étapes**.
 2. **Mots de passe des applications** → générer un mot de passe (16 caractères).
-3. Le mettre dans `GMAIL_IMAP_APP_PASSWORD` (+ `GMAIL_IMAP_USER=nicolas.monniot14@gmail.com`).
+3. Le mettre dans `GMAIL_IMAP_APP_PASSWORD` (+ `GMAIL_IMAP_USER=<ton adresse gmail>`).
 
-### Agent : sur TON PC (Docker Desktop) — recommandé
-L'agent tourne chez toi (IP résidentielle = quasi indétectable ; évite d'héberger Chromium 24/7).
-Le web `skan` reste sur EDJ Labs et alerte 24/7 même PC éteint ; seul le dépôt auto attend le PC.
+### Agent : sur le PC de chaque utilisateur (Docker Desktop)
+Chaque personne fait tourner SON agent chez elle (IP résidentielle = quasi indétectable ; son
+compte iBail, sa boîte mail). Le web `skan` reste sur EDJ Labs et alerte 24/7 même PC éteint ;
+seul le dépôt auto attend le PC. L'agent parle à skan avec un **jeton personnel** : il ne voit que
+les missions de son propriétaire, ne lit jamais les garants, et n'a **ni accès à MongoDB ni
+`VAULT_KEY` ni tokens EDJ Labs**.
 
 1. Rendre l'image `skan-agent` **publique** (GHCR, comme `skan`) — ou `docker login ghcr.io`.
-2. Récupérer 2 fichiers du repo sur ton PC : `docker-compose.agent.yml` + `agent.env.example`.
-3. `copy agent.env.example .env` puis remplir (mêmes valeurs que le web pour Mongo/VAULT_KEY/EDJ/NOTIFY ;
-   `VAULT_KEY` **identique** au web sinon déchiffrement impossible ; + `IBAIL_EMAIL`, `GMAIL_IMAP_*`).
+2. Récupérer 2 fichiers du repo sur le PC : `docker-compose.agent.yml` + `agent.env.example`.
+3. Dans skan → **Settings → Mon agent → Générer mon jeton** : copier les lignes `SKAN_URL` +
+   `AGENT_TOKEN` affichées. `copy agent.env.example .env`, les coller, puis remplir `IBAIL_EMAIL`
+   et `GMAIL_IMAP_*`. (Mise à jour depuis l'ancienne version : retirer `MONGODB_*`, `VAULT_KEY`,
+   `EDJ_*`, `NOTIFY_*` du `.env` de l'agent.)
 4. `docker compose -f docker-compose.agent.yml pull`
 5. **Calibration** (dry-run, ne crée/soumet rien) :
    `docker compose -f docker-compose.agent.yml run --rm agent npx tsx agent/main.ts --calibrate`
@@ -131,7 +164,9 @@ Le web `skan` reste sur EDJ Labs et alerte 24/7 même PC éteint ; seul le dép�
 > PC non-24/7 : à chaque traitement l'agent re-vérifie que la place existe encore ; si elle est
 > partie pendant l'arrêt, il ne tente rien et te notifie. Les alertes de détection, elles, restent 24/7.
 
-Pas besoin de `AUTH_*` ni `CRON_SECRET` côté agent. (Alternative serveur EDJ Labs 24/7 : voir historique — même image, en stack worker sans ports ni labels Traefik.)
+Jeton perdu ou PC compromis : **Régénérer** ou **Révoquer** dans Settings → Mon agent (l'ancien
+jeton cesse immédiatement de fonctionner). Les liens GO expirés et les rappels garants sont gérés
+par le serveur, même agent éteint.
 
 ### Mise en service (progressive, recommandée)
 1. Sur `/settings` : renseigner **garants** + **dossier type**, armer 1 résidence (« coup de cœur »),

@@ -9,7 +9,9 @@
  * disponible. C'est sur cette présence/absence que repose la détection.
  */
 
-const ARPEJ_ENDPOINT = "https://www.arpej.fr/wp-json/sn/residences";
+// Surchargeable (ARPEJ_API_URL) uniquement pour les tests de bout en bout avec un faux ARPEJ local.
+const ARPEJ_ENDPOINT =
+  process.env.ARPEJ_API_URL || "https://www.arpej.fr/wp-json/sn/residences";
 
 export interface Residence {
   id: number;

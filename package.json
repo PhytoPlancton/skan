@@ -6,10 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node --import tsx --test test/checker.test.ts test/crypto.test.ts test/matching.test.ts",
+    "test": "node --import tsx --test test/checker.test.ts test/crypto.test.ts test/matching.test.ts test/session.test.ts",
     "test:live": "node --import tsx --test test/arpej.live.test.ts",
     "verify": "tsx scripts/verify-detection.ts",
-    "hash-password": "tsx scripts/hash-password.ts"
+    "hash-password": "tsx scripts/hash-password.ts",
+    "create-user": "tsx scripts/create-user.ts",
+    "test:db": "node --import tsx --test --test-concurrency=1 test/multiuser.db.test.ts"
   },
   "dependencies": {
     "imapflow": "^1.4.6",

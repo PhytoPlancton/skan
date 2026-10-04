@@ -27,10 +27,10 @@ export interface Dashboard {
   updatedAt: string;
 }
 
-export async function getDashboard(): Promise<Dashboard> {
+export async function getDashboard(userId: string): Promise<Dashboard> {
   const [residences, watches] = await Promise.all([
     getResidencesCached(),
-    listWatches(),
+    listWatches(userId),
   ]);
 
   const watchedSlugs = new Set(watches.map((w) => w.slug));

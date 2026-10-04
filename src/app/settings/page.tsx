@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { UserMenu } from "../user-menu";
+import { AccountSection, AgentSection } from "./account";
 
 type GlobalMode = "manual" | "hybrid" | "auto";
 
@@ -223,10 +225,17 @@ export default function SettingsPage() {
           <span className="dot" />
           skan · settings
         </div>
-        <a href="/" className="modal-link" style={{ marginTop: 0 }}>
-          ← Dashboard
-        </a>
+        <UserMenu
+          links={
+            <a href="/" className="modal-link" style={{ marginTop: 0 }}>
+              ← Dashboard
+            </a>
+          }
+        />
       </div>
+
+      <AccountSection />
+      <AgentSection />
 
       {/* Bandeau d'état */}
       <div className="statusbar">

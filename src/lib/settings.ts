@@ -1,5 +1,5 @@
 /**
- * Configuration de l'auto-candidature (doc singleton Mongo `settings`).
+ * Configuration de l'auto-candidature (collection `settings`, un doc par utilisateur : `_id` = userId).
  * Les plafonds saisis sont bornés par des LIMITES ABSOLUES hardcodées
  * (jamais configurables — cf. tasks/settings-spec.md §4).
  */
@@ -62,7 +62,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
 };
 
 const COLL = "settings";
-const DOC_ID = "app";
 
 function clampTime(t: string, min: string, max: string): string {
   const ok = /^\d{2}:\d{2}$/.test(t);
@@ -101,36 +100,40 @@ export function clampSettings(s: AppSettings): AppSettings {
   return out;
 }
 
-export async function getSettings(): Promise<AppSettings> {
+export async function getSettings(userId: string): Promise<AppSettings> {
   const db = await getDb();
-  const doc = await db.collection(COLL).findOne({ _id: DOC_ID as never });
-  const merged = { ...DEFAULT_SETTINGS, ...(doc ?? {}) } as AppSettings;
+  const doc = await db.collection(COLL).findOne({ _id: userId as never });
+  const { _id: _omit, ...stored } = doc ?? {};
+  const merged = { ...DEFAULT_SETTINGS, ...stored } as AppSettings;
   return clampSettings(merged);
 }
 
 /** Patch partiel — hybridSuccessCount n'est PAS modifiable par l'UI. */
-export async function saveSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
-  const current = await getSettings();
-  const { hybridSuccessCount: _ignored, updatedAt: _ts, ...rest } = patch as Record<
+export async function saveSettings(
+  userId: string,
+  patch: Partial<AppSettings>,
+): Promise<AppSettings> {
+  const current = await getSettings(userId);
+  const { hybridSuccessCount: _ignored, updatedAt: _ts, _id: _forbidden, ...rest } = patch as Record<
     string,
     unknown
-  > as Partial<AppSettings>;
+  > as Partial<AppSettings> & { _id?: unknown };
   const next = clampSettings({ ...current, ...rest, hybridSuccessCount: current.hybridSuccessCount });
   const db = await getDb();
   const { updatedAt: _u, ...toStore } = next;
   await db
     .collection(COLL)
     .updateOne(
-      { _id: DOC_ID as never },
+      { _id: userId as never },
       { $set: { ...toStore, updatedAt: new Date() } },
       { upsert: true },
     );
   return next;
 }
 
-export async function incrementHybridSuccess(): Promise<void> {
+export async function incrementHybridSuccess(userId: string): Promise<void> {
   const db = await getDb();
   await db
     .collection(COLL)
-    .updateOne({ _id: DOC_ID as never }, { $inc: { hybridSuccessCount: 1 } }, { upsert: true });
+    .updateOne({ _id: userId as never }, { $inc: { hybridSuccessCount: 1 } }, { upsert: true });
 }

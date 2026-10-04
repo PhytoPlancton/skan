@@ -5,7 +5,7 @@
  * Toute donnée confidentielle (garants, dossier, session iBail) passe par ici
  * avant d'être persistée — jamais de clair en base.
  */
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 
 const IV_LEN = 12;
 const TAG_LEN = 16;
@@ -16,6 +16,15 @@ function getKey(): Buffer {
     throw new Error("VAULT_KEY manquante ou invalide (attendu : 64 caractères hex)");
   }
   return Buffer.from(hex, "hex");
+}
+
+/**
+ * Clé propre à un utilisateur, dérivée de VAULT_KEY (HKDF-SHA256).
+ * Les données d'un utilisateur ne se déchiffrent qu'avec SA clé : même une
+ * requête mal filtrée ne peut pas révéler en clair le coffre d'un autre.
+ */
+export function userKey(userId: string): Buffer {
+  return Buffer.from(hkdfSync("sha256", getKey(), Buffer.alloc(0), `skan-vault:${userId}`, 32));
 }
 
 export function vaultConfigured(): boolean {

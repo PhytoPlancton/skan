@@ -73,7 +73,7 @@ dès qu'une place se libère dans une résidence surveillée.
 
 ## En attente de toi (bloquants partiels)
 1. **Email API** : endpoint exact + token (section EDJ Labs *Emailing → API & sender*) — absent du dump.
-2. Destinataires : confirmer le tél (+33783483613 ?) et l'email de réception.
+2. Destinataires : confirmer le tél et l'email de réception.
 3. Sous-domaine : `skan.nmt.ovh` (validé) ✅
 4. Sécurité : régénérer les tokens SMS/WhatsApp collés dans le chat (après setup).
 

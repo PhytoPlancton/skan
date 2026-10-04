@@ -1,4 +1,4 @@
-import { authConfigured } from "@/lib/auth";
+import { requireUser } from "@/lib/current-user";
 import { vaultConfigured } from "@/lib/crypto";
 import { getVaultSection, setVaultSection } from "@/lib/vault";
 
@@ -9,12 +9,6 @@ export const dynamic = "force-dynamic";
 const EDITABLE = new Set(["guarantors", "applicationProfile", "reservationCodes"]);
 
 function guard(section: string): Response | null {
-  if (!authConfigured()) {
-    return Response.json(
-      { error: "Configure AUTH_SECRET + AUTH_PASSWORD_HASH avant d'utiliser le coffre" },
-      { status: 403 },
-    );
-  }
   if (!vaultConfigured()) {
     return Response.json({ error: "VAULT_KEY manquante" }, { status: 501 });
   }
@@ -28,11 +22,13 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ section: string }> },
 ) {
+  const g = await requireUser();
+  if (g.error) return g.error;
   const { section } = await params;
   const blocked = guard(section);
   if (blocked) return blocked;
   try {
-    const value = await getVaultSection(section);
+    const value = await getVaultSection(g.user._id, section);
     return Response.json({ section, value });
   } catch (err) {
     console.error("[api/vault GET]", err);
@@ -44,12 +40,14 @@ export async function PUT(
   req: Request,
   { params }: { params: Promise<{ section: string }> },
 ) {
+  const g = await requireUser();
+  if (g.error) return g.error;
   const { section } = await params;
   const blocked = guard(section);
   if (blocked) return blocked;
   try {
     const body = await req.json();
-    await setVaultSection(section, body?.value ?? null);
+    await setVaultSection(g.user._id, section, body?.value ?? null);
     return Response.json({ ok: true });
   } catch (err) {
     console.error("[api/vault PUT]", err);

@@ -1,4 +1,5 @@
 import { slugFromLink } from "@/lib/arpej";
+import { requireUser } from "@/lib/current-user";
 import { statusForSlug } from "@/lib/checker";
 import { getResidencesCached } from "@/lib/residences";
 import { listWatches, upsertWatch } from "@/lib/repo";
@@ -8,8 +9,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const g = await requireUser();
+  if (g.error) return g.error;
   try {
-    const watches = await listWatches();
+    const watches = await listWatches(g.user._id);
     return Response.json({ watches });
   } catch (err) {
     console.error("[api/watches GET]", err);
@@ -18,6 +21,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const g = await requireUser();
+  if (g.error) return g.error;
   let body: { url?: string; slug?: string } = {};
   try {
     body = await req.json();
@@ -41,7 +46,7 @@ export async function POST(req: Request) {
     const status = statusForSlug(slug, bySlug, prettifySlug(slug));
 
     // Baseline silencieuse : on n'alerte pas pour une dispo déjà visible.
-    await upsertWatch({
+    await upsertWatch(g.user._id, {
       slug,
       title: status.title,
       link: status.link,

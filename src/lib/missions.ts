@@ -30,6 +30,7 @@ export const ACTIVE_STATUSES: MissionStatus[] = [
 
 export interface MissionDoc {
   _id?: ObjectId;
+  userId: string;
   slug: string;
   title: string;
   link: string;
@@ -44,6 +45,8 @@ export interface MissionDoc {
   goTokenExp?: Date;
   submittedAt?: Date;
   ibailRecordId?: string;
+  remindGuarantorsAt?: Date;
+  guarantorsReminded?: boolean;
   journal: Array<{ at: Date; event: string; detail?: string }>;
   createdAt: Date;
   updatedAt: Date;
@@ -57,8 +60,8 @@ export async function ensureMissionIndexes(): Promise<void> {
   await db.collection(COLL).createIndex({ createdAt: -1 });
 }
 
-/** Compteurs pour les plafonds (jour/semaine Paris, missions actives). */
-export async function applyCounters(): Promise<{
+/** Compteurs d'un utilisateur pour ses plafonds (jour/semaine glissants, missions actives). */
+export async function applyCounters(userId: string): Promise<{
   today: number;
   week: number;
   active: number;
@@ -69,14 +72,14 @@ export async function applyCounters(): Promise<{
   const dayAgo = new Date(now - 24 * 3_600_000);
   const weekAgo = new Date(now - 7 * 24 * 3_600_000);
   const [today, week, active] = await Promise.all([
-    coll.countDocuments({ status: "submitted", submittedAt: { $gte: dayAgo } }),
-    coll.countDocuments({ status: "submitted", submittedAt: { $gte: weekAgo } }),
-    coll.countDocuments({ status: { $in: ACTIVE_STATUSES } }),
+    coll.countDocuments({ userId, status: "submitted", submittedAt: { $gte: dayAgo } }),
+    coll.countDocuments({ userId, status: "submitted", submittedAt: { $gte: weekAgo } }),
+    coll.countDocuments({ userId, status: { $in: ACTIVE_STATUSES } }),
   ]);
   return { today, week, active };
 }
 
-/** Crée une mission si aucune n'est active (ou déjà créée aujourd'hui) pour ce slug. */
+/** Crée une mission si l'utilisateur n'en a aucune active (ou déjà créée aujourd'hui) pour ce slug. */
 export async function createMissionIfNone(
   m: Omit<MissionDoc, "_id" | "createdAt" | "updatedAt" | "journal" | "dayKey">,
 ): Promise<{ created: boolean; reason?: string }> {
@@ -85,6 +88,7 @@ export async function createMissionIfNone(
   const dayKey = parisDay();
 
   const existing = await coll.findOne({
+    userId: m.userId,
     slug: m.slug,
     $or: [{ status: { $in: ACTIVE_STATUSES } }, { dayKey, status: { $ne: "skipped" } }],
   });
@@ -105,12 +109,14 @@ export async function createMissionIfNone(
 
 /** Trace une décision de NON-action (journal des refus, visible dans l'UI). */
 export async function recordSkip(
+  userId: string,
   alert: { slug: string; title: string; link: string; availableRooms: number },
   reason: string,
 ): Promise<void> {
   const db = await getDb();
   const now = new Date();
   await db.collection<MissionDoc>(COLL).insertOne({
+    userId,
     slug: alert.slug,
     title: alert.title,
     link: alert.link,
@@ -128,20 +134,21 @@ export async function recordSkip(
 }
 
 /** Une mission existe-t-elle déjà pour ce slug (active OU créée aujourd'hui) ? (idempotence) */
-export async function hasMissionToday(slug: string): Promise<boolean> {
+export async function hasMissionToday(userId: string, slug: string): Promise<boolean> {
   const db = await getDb();
   const n = await db.collection<MissionDoc>(COLL).countDocuments({
+    userId,
     slug,
     $or: [{ status: { $in: ACTIVE_STATUSES } }, { dayKey: parisDay() }],
   });
   return n > 0;
 }
 
-export async function listMissions(limit = 50): Promise<MissionDoc[]> {
+export async function listMissions(userId: string, limit = 50): Promise<MissionDoc[]> {
   const db = await getDb();
   return db
     .collection<MissionDoc>(COLL)
-    .find({})
+    .find({ userId }, { projection: { goToken: 0 } })
     .sort({ createdAt: -1 })
     .limit(limit)
     .toArray();
@@ -154,13 +161,13 @@ export async function listMissions(limit = 50): Promise<MissionDoc[]> {
  * une `approved` (GO cliqué — priorité, l'utilisateur attend) sinon une
  * `pending` arrivée à maturité (notBefore <= now). Une seule à la fois.
  */
-export async function claimNextMission(): Promise<MissionDoc | null> {
+export async function claimNextMission(userId: string): Promise<MissionDoc | null> {
   const db = await getDb();
   const coll = db.collection<MissionDoc>(COLL);
   const now = new Date();
 
   const approved = await coll.findOneAndUpdate(
-    { status: "approved" },
+    { userId, status: "approved" },
     {
       $set: { status: "submitting", updatedAt: now },
       $push: { journal: { at: now, event: "claimed_for_submission" } },
@@ -170,7 +177,7 @@ export async function claimNextMission(): Promise<MissionDoc | null> {
   if (approved) return approved;
 
   return coll.findOneAndUpdate(
-    { status: "pending", notBefore: { $lte: now } },
+    { userId, status: "pending", notBefore: { $lte: now } },
     {
       $set: { status: "preparing", updatedAt: now },
       $push: { journal: { at: now, event: "claimed_for_preparation" } },
@@ -180,6 +187,7 @@ export async function claimNextMission(): Promise<MissionDoc | null> {
 }
 
 export async function updateMission(
+  userId: string,
   id: ObjectId,
   patch: Partial<MissionDoc>,
   journalEvent?: string,
@@ -191,10 +199,17 @@ export async function updateMission(
   if (journalEvent) {
     update.$push = { journal: { at: now, event: journalEvent, detail: journalDetail } };
   }
-  await db.collection<MissionDoc>(COLL).updateOne({ _id: id }, update as never);
+  await db.collection<MissionDoc>(COLL).updateOne({ _id: id, userId }, update as never);
 }
 
-/** Missions hybrides dont le lien GO a expiré → `expired` (renvoyées pour notif). */
+/** Mission d'un utilisateur par id (null si elle ne lui appartient pas). */
+export async function getUserMission(userId: string, id: string): Promise<MissionDoc | null> {
+  if (!ObjectId.isValid(id)) return null;
+  const db = await getDb();
+  return db.collection<MissionDoc>(COLL).findOne({ _id: new ObjectId(id), userId });
+}
+
+/** Missions hybrides dont le lien GO a expiré → `expired` (tous utilisateurs, renvoyées pour notif). */
 export async function expireStaleGoMissions(): Promise<MissionDoc[]> {
   const db = await getDb();
   const coll = db.collection<MissionDoc>(COLL);
@@ -202,7 +217,7 @@ export async function expireStaleGoMissions(): Promise<MissionDoc[]> {
     .find({ status: "awaiting_go", goTokenExp: { $lt: new Date() } })
     .toArray();
   for (const m of stale) {
-    await updateMission(m._id!, { status: "expired" }, "go_expired");
+    await updateMission(m.userId, m._id!, { status: "expired" }, "go_expired");
   }
   return stale;
 }
@@ -240,4 +255,25 @@ export async function approveMissionByToken(
     return { ok: false, reason: "lien expiré" };
   }
   return { ok: false, reason: `statut ${existing.status}` };
+}
+
+/** Soumissions dont le rappel « préviens tes garants » est dû (tous utilisateurs). Marquées atomiquement. */
+export async function claimDueGuarantorReminders(): Promise<MissionDoc[]> {
+  const db = await getDb();
+  const coll = db.collection<MissionDoc>(COLL);
+  const due: MissionDoc[] = [];
+  for (;;) {
+    const m = await coll.findOneAndUpdate(
+      {
+        status: "submitted",
+        remindGuarantorsAt: { $lte: new Date() },
+        guarantorsReminded: { $ne: true },
+      },
+      { $set: { guarantorsReminded: true } },
+      { returnDocument: "after" },
+    );
+    if (!m) break;
+    due.push(m);
+  }
+  return due;
 }
