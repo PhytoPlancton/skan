@@ -8,6 +8,10 @@ choix et alerte sur **Email + WhatsApp + SMS** (API EDJ Labs) dès qu'une place 
   (ex. Eole) ajoutées par URL/slug
 - Détection par transition `indisponible → disponible` (anti-spam : une alerte par ouverture)
 - Polling interne toutes les 5 min (configurable)
+- **Surface minimale / type de logement** : alertes seulement à partir de X m² (réglage du compte,
+  ajustable par résidence, + type précis / loyer max en option). Le détail par type (« 1 Comfort
+  Studio · 29–38 m² · 602–704 € ») est lu sur les pages publiques iBail ; si iBail est illisible,
+  l'alerte part quand même, marquée « type non vérifié »
 - **Multi-utilisateur** : chaque compte a ses surveillances, réglages, garants (chiffrés
   avec sa propre clé), missions, alertes et son propre agent
 

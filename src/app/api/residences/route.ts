@@ -8,7 +8,7 @@ export async function GET() {
   const g = await requireUser();
   if (g.error) return g.error;
   try {
-    const dashboard = await getDashboard(g.user._id);
+    const dashboard = await getDashboard(g.user._id, g.user.minSurface ?? null);
     return Response.json(dashboard);
   } catch (err) {
     console.error("[api/residences]", err);

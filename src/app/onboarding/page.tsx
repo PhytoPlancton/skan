@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Me } from "../user-menu";
+import { SurfacePicker, WatchFilters, filtersLabel, type Filters } from "../watch-filters";
 
 type Channel = "sms" | "whatsapp" | "email";
 type Step = "password" | "contact" | "residences" | "done";
@@ -15,6 +16,7 @@ interface Residence {
   availableRooms: number;
   available: boolean;
   watched: boolean;
+  filters: Filters | null;
 }
 
 const CHANNELS: Array<{ id: Channel; icon: string; label: string; hint: string }> = [
@@ -67,6 +69,7 @@ export default function OnboardingPage() {
   const [query, setQuery] = useState("");
   const [url, setUrl] = useState("");
   const [urlMsg, setUrlMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [openFilters, setOpenFilters] = useState<string | null>(null);
 
   // Figé au chargement : l'étape mot de passe reste dans la frise une fois faite.
   const [withPassword, setWithPassword] = useState(false);
@@ -168,8 +171,13 @@ export default function OnboardingPage() {
 
   const toggleWatch = (r: Residence) =>
     run(async () => {
-      if (r.watched) await send(`/api/watches/${r.slug}`, "DELETE");
-      else await send("/api/watches", "POST", { slug: r.slug });
+      if (r.watched) {
+        await send(`/api/watches/${r.slug}`, "DELETE");
+        if (openFilters === r.slug) setOpenFilters(null);
+      } else {
+        await send("/api/watches", "POST", { slug: r.slug });
+        setOpenFilters(r.slug);
+      }
       await loadResidences();
     });
 
@@ -179,6 +187,7 @@ export default function OnboardingPage() {
       try {
         const j = await send("/api/watches", "POST", { url: url.trim() });
         setUrl("");
+        setOpenFilters(j.slug);
         setUrlMsg({ ok: true, text: `« ${j.status.title} » ajoutée — tu seras prévenu dès qu'une place s'ouvre.` });
         await loadResidences();
       } catch (e) {
@@ -352,17 +361,51 @@ export default function OnboardingPage() {
             Coche celles que tu vises. Tu seras prévenu à chaque fois qu&apos;une place s&apos;y libère.
           </p>
 
+          <div className="onb-min">
+            <div className="onb-url-title">Taille minimum du logement</div>
+            <p className="hint" style={{ marginTop: 4, marginBottom: 10 }}>
+              Tu ne seras prévenu que pour les logements à partir de cette surface. Tu verras quand
+              même toutes les dispos en cliquant sur une résidence.
+            </p>
+            <SurfacePicker
+              value={me.minSurface}
+              onChange={(v) =>
+                run(async () => {
+                  const j = await send("/api/me", "PATCH", { minSurface: v });
+                  setMe(j.user);
+                })
+              }
+            />
+          </div>
+
           {watched.length > 0 && (
             <div className="onb-chips">
               {watched.map((r) => (
-                <span key={r.slug} className="onb-chip">
-                  ★ {r.title}
+                <span key={r.slug} className={`onb-chip${openFilters === r.slug ? " open" : ""}`}>
+                  <button
+                    className="lbl"
+                    onClick={() => setOpenFilters(openFilters === r.slug ? null : r.slug)}
+                    title="Choisir le type de logement"
+                  >
+                    ★ {r.title}
+                    <small>{filtersLabel(r.filters, me.minSurface)} ▾</small>
+                  </button>
                   <button onClick={() => toggleWatch(r)} disabled={busy} aria-label={`Retirer ${r.title}`}>
                     ✕
                   </button>
                 </span>
               ))}
             </div>
+          )}
+          {openFilters && watched.some((r) => r.slug === openFilters) ? (
+            <WatchFilters key={openFilters} slug={openFilters} onSaved={() => loadResidences()} />
+          ) : (
+            watched.length > 0 && (
+              <p className="hint">
+                Clique sur une résidence pour voir ses dispos par type et, si besoin, régler un autre
+                minimum ou un type précis juste pour elle.
+              </p>
+            )
           )}
 
           <div className="onb-url">
@@ -473,7 +516,11 @@ export default function OnboardingPage() {
                 {watched.length === 0 ? (
                   <span className="muted">Aucune pour l&apos;instant — ajoute-les depuis le tableau de bord.</span>
                 ) : (
-                  watched.map((r) => <div key={r.slug}>★ {r.title}</div>)
+                  watched.map((r) => (
+                    <div key={r.slug}>
+                      ★ {r.title} <span className="muted">— {filtersLabel(r.filters, me.minSurface)}</span>
+                    </div>
+                  ))
                 )}
               </div>
             </div>

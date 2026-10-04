@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { UserMenu } from "./user-menu";
+import { WatchFilters, filtersLabel, type Filters } from "./watch-filters";
 
 interface Item {
   slug: string;
@@ -13,9 +14,11 @@ interface Item {
   availableRooms: number;
   available: boolean;
   watched: boolean;
+  filters: Filters | null;
 }
 
 interface Dashboard {
+  userMinSurface: number | null;
   items: Item[];
   total: number;
   availableCount: number;
@@ -28,6 +31,7 @@ interface Alert {
   title: string;
   link: string;
   availableRooms: number;
+  detail?: string;
   channels: Record<string, boolean>;
   createdAt: string;
 }
@@ -349,6 +353,9 @@ export default function Home() {
                 .filter(Boolean)
                 .join(" · ") || "—"}
             </div>
+            {it.watched && (it.filters || data?.userMinSurface) && (
+              <div className="filt">🔔 {filtersLabel(it.filters, data?.userMinSurface)}</div>
+            )}
             <div className="foot">
               <span className={`badge ${it.available ? "available" : "none"}`}>
                 {it.available ? `${it.availableRooms} dispo` : "Aucun dispo"}
@@ -393,7 +400,7 @@ export default function Home() {
         alerts.map((a, i) => (
           <div className="alert-row" key={`${a.slug}-${i}`}>
             <div>
-              {a.title} — {a.availableRooms} logement(s)
+              {a.title} — {a.detail ?? `${a.availableRooms} logement(s)`}
               {Object.entries(a.channels).map(([c, ok]) => (
                 <span key={c} className={`chan ${ok ? "ok" : "ko"}`}>
                   {c}
@@ -438,6 +445,23 @@ export default function Home() {
                 ))}
               </div>
             </div>
+
+            {selected.watched ? (
+              <WatchFilters slug={selected.slug} onSaved={() => load()} />
+            ) : (
+              <div className="row-actions">
+                <button
+                  className="btn"
+                  disabled={busy}
+                  onClick={async () => {
+                    await toggleWatch(selected);
+                    setSelected({ ...selected, watched: true });
+                  }}
+                >
+                  ☆ Surveiller cette résidence
+                </button>
+              </div>
+            )}
 
             <div className="chart-label">Logements disponibles par semaine (pic)</div>
             {hist === null ? (

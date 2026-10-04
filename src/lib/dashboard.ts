@@ -5,6 +5,7 @@
  */
 import { getResidencesCached } from "./residences";
 import { listWatches } from "./repo";
+import { hasFilters, type WatchFilters } from "./typologies";
 
 export interface DashboardItem {
   slug: string;
@@ -17,9 +18,13 @@ export interface DashboardItem {
   available: boolean;
   image: string | null;
   watched: boolean;
+  /** Filtres de la surveillance (null = tous les logements). */
+  filters: WatchFilters | null;
 }
 
 export interface Dashboard {
+  /** Surface minimale générale du compte (null = peu importe). */
+  userMinSurface: number | null;
   items: DashboardItem[];
   total: number;
   availableCount: number;
@@ -27,13 +32,16 @@ export interface Dashboard {
   updatedAt: string;
 }
 
-export async function getDashboard(userId: string): Promise<Dashboard> {
+export async function getDashboard(userId: string, userMinSurface: number | null = null): Promise<Dashboard> {
   const [residences, watches] = await Promise.all([
     getResidencesCached(),
     listWatches(userId),
   ]);
 
   const watchedSlugs = new Set(watches.map((w) => w.slug));
+  const filtersBySlug = new Map(
+    watches.map((w) => [w.slug, hasFilters(w.filters) ? w.filters : null] as const),
+  );
   const liveSlugs = new Set(residences.map((r) => r.slug));
 
   const items: DashboardItem[] = residences.map((r) => ({
@@ -47,6 +55,7 @@ export async function getDashboard(userId: string): Promise<Dashboard> {
     available: r.availableRooms > 0,
     image: r.image,
     watched: watchedSlugs.has(r.slug),
+    filters: filtersBySlug.get(r.slug) ?? null,
   }));
 
   // Surveillances qui ne sont pas dans la liste live = 0 logement disponible.
@@ -63,6 +72,7 @@ export async function getDashboard(userId: string): Promise<Dashboard> {
         available: false,
         image: null,
         watched: true,
+        filters: filtersBySlug.get(w.slug) ?? null,
       });
     }
   }
@@ -76,6 +86,7 @@ export async function getDashboard(userId: string): Promise<Dashboard> {
   );
 
   return {
+    userMinSurface,
     items,
     total: residences.length,
     availableCount: residences.filter((r) => r.availableRooms > 0).length,

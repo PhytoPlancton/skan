@@ -34,6 +34,8 @@ export interface UserDoc {
   onboardedAt?: Date | null;
   /** Mot de passe provisoire (créé/réinitialisé par l'admin) → à changer. */
   mustChangePassword?: boolean;
+  /** Surface minimale (m²) pour être alerté, toutes résidences (null = peu importe). */
+  minSurface?: number | null;
   disabled: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -51,6 +53,7 @@ export interface PublicUser {
   channels: Channel[];
   onboarded: boolean;
   mustChangePassword: boolean;
+  minSurface: number | null;
   disabled: boolean;
   createdAt: Date;
 }
@@ -74,6 +77,7 @@ export function toPublic(u: UserDoc): PublicUser {
     onboarded: !!u.onboardedAt,
     // comptes créés avant ce champ : provisoire si créé par l'admin (rôle user)
     mustChangePassword: u.mustChangePassword ?? u.role !== "admin",
+    minSurface: u.minSurface ?? null,
     disabled: !!u.disabled,
     createdAt: u.createdAt,
   };
@@ -180,7 +184,15 @@ export async function updateUser(
   patch: Partial<
     Pick<
       UserDoc,
-      "phone" | "email" | "role" | "disabled" | "smsDailyLimit" | "channels" | "onboardedAt" | "mustChangePassword"
+      | "phone"
+      | "email"
+      | "role"
+      | "disabled"
+      | "smsDailyLimit"
+      | "channels"
+      | "onboardedAt"
+      | "mustChangePassword"
+      | "minSurface"
     >
   > & {
     password?: string;

@@ -8,6 +8,7 @@ import { runCheck } from "./check-run";
 import { ensureMissionIndexes } from "./missions";
 import { ensureIndexes } from "./repo";
 import { ensureBootstrap } from "./users";
+import { ensureTypologyIndexes } from "./typologies";
 
 const globalForPoller = globalThis as unknown as { _skanPollerStarted?: boolean };
 
@@ -17,6 +18,7 @@ export function startPoller(): void {
 
   ensureIndexes().catch((e) => console.error("[poller] ensureIndexes:", e));
   ensureBootstrap().catch((e) => console.error("[poller] bootstrap/migration:", e));
+  ensureTypologyIndexes().catch((e) => console.error("[poller] ensureTypologyIndexes:", e));
   ensureMissionIndexes().catch((e) => console.error("[poller] ensureMissionIndexes:", e));
 
   const minutes = Math.min(59, Math.max(1, Number(process.env.POLL_INTERVAL_MIN || 5)));

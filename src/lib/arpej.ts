@@ -100,7 +100,7 @@ export async function fetchAllResidences(): Promise<Residence[]> {
 }
 
 // Site public (pages résidences) — surchargeable pour les tests, comme l'API.
-const ARPEJ_SITE = (process.env.ARPEJ_SITE_URL || "https://www.arpej.fr").replace(/\/+$/, "");
+export const ARPEJ_SITE = (process.env.ARPEJ_SITE_URL || "https://www.arpej.fr").replace(/\/+$/, "");
 
 const NAMED_ENTITIES: Record<string, string> = {
   amp: "&", quot: '"', apos: "'", lt: "<", gt: ">", nbsp: " ",
@@ -111,7 +111,7 @@ const NAMED_ENTITIES: Record<string, string> = {
   rsquo: "’", lsquo: "‘", ldquo: "“", rdquo: "”", ndash: "–", mdash: "—", hellip: "…",
 };
 
-function decodeEntities(s: string): string {
+export function decodeEntities(s: string): string {
   return s
     .replace(/&([a-zA-Z]+);/g, (m, name: string) => NAMED_ENTITIES[name] ?? m)
     .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))

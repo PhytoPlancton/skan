@@ -13,6 +13,7 @@ export interface Me {
   channels: Array<"sms" | "whatsapp" | "email">;
   onboarded: boolean;
   mustChangePassword: boolean;
+  minSurface: number | null;
 }
 
 /** Hook : le compte connecté (null tant que non chargé). */

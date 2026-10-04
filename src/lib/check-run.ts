@@ -12,7 +12,12 @@
  */
 import { decideApplication } from "./apply-matching";
 import { fetchAllResidences, type Residence } from "./arpej";
-import { computeAlerts, type AlertEvent, type WatchRecord } from "./checker";
+import {
+  computeFilteredAlerts,
+  type AlertEvent,
+  type OffersBySlug,
+  type WatchRecord,
+} from "./checker";
 import { parisDay } from "./dates";
 import {
   applyCounters,
@@ -32,6 +37,7 @@ import {
   type WatchDoc,
 } from "./repo";
 import { getSettings, type AppSettings } from "./settings";
+import { describeOffer, effectiveFilters, fetchResidenceOffers } from "./typologies";
 import { ensureBootstrap, listUsers, type UserDoc } from "./users";
 
 export interface CheckSummary {
@@ -73,6 +79,17 @@ export async function runCheck(): Promise<CheckSummary> {
     console.error("[check] history:", e),
   );
 
+  // Détail par type (iBail) des résidences surveillées et dispo : une lecture par
+  // résidence, partagée entre tous les utilisateurs.
+  const offersBySlug: OffersBySlug = new Map();
+  const availableWatched = new Set(
+    watches.filter((w) => residences.some((r) => r.slug === w.slug && r.availableRooms > 0)).map((w) => w.slug),
+  );
+  for (const slug of availableWatched) {
+    const res = await fetchResidenceOffers(slug);
+    offersBySlug.set(slug, res ? { url: res.url, offers: res.offers } : null);
+  }
+
   const byUser = new Map<string, WatchDoc[]>();
   for (const w of watches) {
     const list = byUser.get(w.userId) ?? [];
@@ -86,7 +103,7 @@ export async function runCheck(): Promise<CheckSummary> {
 
   for (const [userId, userWatches] of byUser) {
     const user = users.get(userId)!;
-    const r = await checkUser(user, userWatches, residences).catch((e) => {
+    const r = await checkUser(user, userWatches, residences, offersBySlug).catch((e) => {
       console.error(`[check] ${userId}:`, e);
       return { alerts: 0, sent: 0, failed: 0 };
     });
@@ -103,6 +120,8 @@ export async function runCheck(): Promise<CheckSummary> {
       console.error(`[check] auto-apply ${userId}:`, e),
     );
   }
+
+  await refreshCatalog(residences, offersBySlug).catch((e) => console.error("[check] catalogue:", e));
 
   console.log(
     `[check] ${users.size} utilisateur(s), ${watches.length} surveillance(s), ${alertCount} alerte(s), ${sent} envoyée(s), ${failed} échec(s)`,
@@ -122,8 +141,11 @@ async function checkUser(
   user: UserDoc,
   watches: WatchRecord[],
   residences: Residence[],
+  offersBySlug: OffersBySlug,
 ): Promise<{ alerts: number; sent: number; failed: number }> {
-  const { alerts, updates } = computeAlerts(watches, residences);
+  // Minimum de surface du compte appliqué aux résidences qui n'ont pas le leur.
+  const effective = watches.map((w) => ({ ...w, filters: effectiveFilters(w.filters, user.minSurface) }));
+  const { alerts, updates } = computeFilteredAlerts(effective, residences, offersBySlug);
   const updateBySlug = new Map<string, WatchRecord>(updates.map((u) => [u.slug, u]));
   let sent = 0;
   let failed = 0;
@@ -138,6 +160,7 @@ async function checkUser(
       title: alert.title,
       link: alert.link,
       availableRooms: alert.availableRooms,
+      ...(alert.offers?.length ? { detail: alert.offers.map(describeOffer).join(" · ") } : {}),
       channels,
       createdAt: new Date(),
     });
@@ -158,6 +181,21 @@ async function checkUser(
 
   await applyCheckUpdates(user._id, updates);
   return { alerts: alerts.length, sent, failed };
+}
+
+const globalForCatalog = globalThis as unknown as { _skanCatalogAt?: number };
+
+/**
+ * Toutes les heures, lit aussi les types des résidences dispo NON surveillées :
+ * le catalogue des types se remplit et peut être proposé dans les filtres.
+ */
+async function refreshCatalog(residences: Residence[], done: OffersBySlug): Promise<void> {
+  const now = Date.now();
+  if (globalForCatalog._skanCatalogAt && now - globalForCatalog._skanCatalogAt < 3_600_000) return;
+  globalForCatalog._skanCatalogAt = now;
+  for (const r of residences) {
+    if (r.availableRooms > 0 && !done.has(r.slug)) await fetchResidenceOffers(r.slug);
+  }
 }
 
 /** Entretien (serveur 24/7) : liens GO expirés et rappels garants, notifiés à leur propriétaire. */

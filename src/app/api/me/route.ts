@@ -44,16 +44,27 @@ export async function PATCH(req: Request) {
     if (!c) return Response.json({ error: "choisis au moins un moyen d'alerte" }, { status: 400 });
     patch.channels = c;
   }
+  if (body.minSurface !== undefined) {
+    const raw = body.minSurface;
+    const n = raw === null || raw === "" || raw === 0 ? null : Number(raw);
+    if (n !== null && !(Number.isFinite(n) && n > 0 && n <= 500)) {
+      return Response.json({ error: "surface minimale invalide (en m²)" }, { status: 400 });
+    }
+    patch.minSurface = n === null ? null : Math.round(n * 10) / 10;
+  }
   if (body.onboarded === true) patch.onboardedAt = new Date();
 
+  // Cohérence canaux ↔ coordonnées : vérifiée seulement quand on les modifie
+  // (changer la surface minimale ne doit pas être bloqué par un email manquant).
+  const touchesContact = patch.phone !== undefined || patch.email !== undefined || patch.channels !== undefined;
   const pub = toPublic(g.user);
   const phone = patch.phone ?? pub.phone;
   const email = patch.email ?? pub.email;
   const channels = patch.channels ?? pub.channels;
-  if ((channels.includes("sms") || channels.includes("whatsapp")) && !phone) {
+  if (touchesContact && (channels.includes("sms") || channels.includes("whatsapp")) && !phone) {
     return Response.json({ error: "renseigne ton numéro pour les SMS / WhatsApp" }, { status: 400 });
   }
-  if (channels.includes("email") && !email) {
+  if (touchesContact && channels.includes("email") && !email) {
     return Response.json({ error: "renseigne ton email pour les alertes par email" }, { status: 400 });
   }
 

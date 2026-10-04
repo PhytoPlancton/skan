@@ -15,6 +15,7 @@
  *   Email    POST {EDJ_EMAIL_ENDPOINT}   body { recipients, subject, html }  (défaut /email/send)
  */
 import type { AlertEvent } from "./checker";
+import { describeOffer } from "./typologies";
 import { parisDay } from "./dates";
 import { getDb } from "./db";
 
@@ -39,6 +40,12 @@ function enabledChannels(): Channel[] {
 }
 
 export function buildMessage(a: AlertEvent): string {
+  if (a.offers && a.offers.length > 0) {
+    return `🏠 ARPEJ — ${a.title} : ${a.offers.map(describeOffer).join(" · ")} dispo ! Réserve vite : ${a.bookingUrl ?? a.link}`;
+  }
+  if (a.unverified) {
+    return `🏠 ARPEJ — ${a.title} : place disponible (type non vérifié, iBail injoignable) — vérifie : ${a.link}`;
+  }
   const n = a.availableRooms;
   return `🏠 ARPEJ — ${a.title} : ${n} logement${n > 1 ? "s" : ""} disponible${
     n > 1 ? "s" : ""
@@ -63,7 +70,7 @@ async function postJson(
 
 /** Envoie l'alerte « place disponible » sur tous les canaux actifs. */
 export async function notify(to: Recipient, a: AlertEvent): Promise<Record<Channel, boolean>> {
-  return notifyText(to, buildMessage(a), `ARPEJ — ${a.title} : logement disponible`, a.link);
+  return notifyText(to, buildMessage(a), `ARPEJ — ${a.title} : logement disponible`, a.bookingUrl ?? a.link);
 }
 
 const USAGE = "notify_usage";

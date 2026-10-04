@@ -6,6 +6,7 @@
 import { getDb } from "./db";
 import type { WatchRecord } from "./checker";
 import { dayMinus } from "./dates";
+import type { WatchFilters } from "./typologies";
 
 const WATCHES = "watches";
 const ALERTS = "alerts";
@@ -20,6 +21,8 @@ export interface WatchDoc extends WatchRecord {
 export interface AlertDoc {
   userId: string;
   slug: string;
+  /** Détail par type (« 1 Comfort Studio (29–38 m², 602–704 €) »). */
+  detail?: string;
   title: string;
   link: string;
   availableRooms: number;
@@ -56,6 +59,25 @@ export async function upsertWatch(userId: string, rec: WatchRecord): Promise<voi
     },
     { upsert: true },
   );
+}
+
+export async function getWatch(userId: string, slug: string): Promise<WatchDoc | null> {
+  const db = await getDb();
+  return db.collection<WatchDoc>(WATCHES).findOne({ userId, slug }, { projection: { _id: 0 } });
+}
+
+/** Change les filtres d'une surveillance et repose la baseline (sans alerte). */
+export async function setWatchFilters(
+  userId: string,
+  slug: string,
+  filters: WatchFilters | null,
+  baselineAvailable: boolean,
+): Promise<boolean> {
+  const db = await getDb();
+  const r = await db
+    .collection<WatchDoc>(WATCHES)
+    .updateOne({ userId, slug }, { $set: { filters, lastAvailable: baselineAvailable } });
+  return r.matchedCount > 0;
 }
 
 export async function removeWatch(userId: string, slug: string): Promise<boolean> {

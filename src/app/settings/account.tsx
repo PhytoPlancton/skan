@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMe } from "../user-menu";
+import { SurfacePicker } from "../watch-filters";
 
 async function send(url: string, method: string, body?: unknown) {
   const res = await fetch(url, {
@@ -20,6 +21,7 @@ export function AccountSection() {
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [channels, setChannels] = useState<Array<"sms" | "whatsapp" | "email">>([]);
+  const [minSurface, setMinSurface] = useState<number | null>(null);
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -30,6 +32,7 @@ export function AccountSection() {
       setPhone(me.phone);
       setEmail(me.email);
       setChannels(me.channels);
+      setMinSurface(me.minSurface);
     }
   }, [me]);
 
@@ -109,6 +112,23 @@ export function AccountSection() {
         >
           Envoyer un test
         </button>
+      </div>
+
+      <div style={{ marginTop: 18 }}>
+        <div className="hint" style={{ marginBottom: 8 }}>
+          <b>Taille minimum</b> : alertes seulement à partir de cette surface (toutes tes résidences,
+          sauf réglage propre à une résidence).
+        </div>
+        <SurfacePicker
+          value={minSurface}
+          onChange={(v) =>
+            run(async () => {
+              await send("/api/me", "PATCH", { minSurface: v });
+              setMinSurface(v);
+              return v ? `Alertes à partir de ${v} m²` : "Alertes pour toutes les surfaces";
+            })
+          }
+        />
       </div>
 
       <div className="grid2" style={{ marginTop: 18 }}>
