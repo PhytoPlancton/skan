@@ -98,3 +98,56 @@ export async function fetchAllResidences(): Promise<Residence[]> {
 
   return out;
 }
+
+// Site public (pages résidences) — surchargeable pour les tests, comme l'API.
+const ARPEJ_SITE = (process.env.ARPEJ_SITE_URL || "https://www.arpej.fr").replace(/\/+$/, "");
+
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: "&", quot: '"', apos: "'", lt: "<", gt: ">", nbsp: " ",
+  eacute: "é", egrave: "è", ecirc: "ê", euml: "ë", Eacute: "É", Egrave: "È", Ecirc: "Ê",
+  agrave: "à", acirc: "â", auml: "ä", Agrave: "À", Acirc: "Â",
+  icirc: "î", iuml: "ï", ocirc: "ô", ouml: "ö", ugrave: "ù", ucirc: "û", uuml: "ü",
+  ccedil: "ç", Ccedil: "Ç", oelig: "œ", OElig: "Œ", aelig: "æ",
+  rsquo: "’", lsquo: "‘", ldquo: "“", rdquo: "”", ndash: "–", mdash: "—", hellip: "…",
+};
+
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&([a-zA-Z]+);/g, (m, name: string) => NAMED_ENTITIES[name] ?? m)
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)));
+}
+
+/**
+ * Vérifie qu'une résidence existe sur arpej.fr (utile pour celles à 0 logement,
+ * absentes de l'API) et récupère son nom.
+ * → { exists: true, title } | { exists: false } | null si arpej.fr est injoignable.
+ */
+export async function lookupResidencePage(
+  slug: string,
+): Promise<{ exists: true; title: string | null } | { exists: false } | null> {
+  try {
+    const res = await fetch(`${ARPEJ_SITE}/fr/residence/${slug}/`, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; skan/1.0)" },
+      cache: "no-store",
+      redirect: "follow",
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (res.status === 404 || res.status === 410) return { exists: false };
+    if (!res.ok) return null;
+    const html = (await res.text()).slice(0, 200_000);
+    const raw =
+      html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i)?.[1] ??
+      html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] ??
+      null;
+    if (!raw) return { exists: true, title: null };
+    // « Résidence X - Ville | ARPEJ » → « Résidence X - Ville »
+    const title = decodeEntities(raw)
+      .replace(/\s*[|–—-]\s*ARPEJ.*$/i, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return { exists: true, title: title || null };
+  } catch {
+    return null;
+  }
+}

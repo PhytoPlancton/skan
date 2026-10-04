@@ -19,6 +19,7 @@ export function AccountSection() {
   const me = useMe();
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
+  const [channels, setChannels] = useState<Array<"sms" | "whatsapp" | "email">>([]);
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -28,6 +29,7 @@ export function AccountSection() {
     if (me) {
       setPhone(me.phone);
       setEmail(me.email);
+      setChannels(me.channels);
     }
   }, [me]);
 
@@ -52,10 +54,24 @@ export function AccountSection() {
         Les alertes (place dispo, GO, échecs…) partent vers CES coordonnées.
         {me.smsDailyLimit > 0 && ` Plafond : ${me.smsDailyLimit} SMS/WhatsApp par jour (au-delà, email seulement).`}
       </p>
+      <div className="row-actions">
+        {(["sms", "whatsapp", "email"] as const).map((c) => (
+          <label key={c} className="switch-row">
+            <input
+              type="checkbox"
+              checked={channels.includes(c)}
+              onChange={() =>
+                setChannels((cur) => (cur.includes(c) ? cur.filter((x) => x !== c) : [...cur, c]))
+              }
+            />
+            <span>{c === "sms" ? "💬 SMS" : c === "whatsapp" ? "🟢 WhatsApp" : "✉️ Email"}</span>
+          </label>
+        ))}
+      </div>
       <div className="grid2">
         <label>
-          Téléphone (+33…)
-          <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+33612345678" />
+          Téléphone
+          <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="06 12 34 56 78" />
         </label>
         <label>
           Email
@@ -68,7 +84,10 @@ export function AccountSection() {
           disabled={busy}
           onClick={() =>
             run(async () => {
-              await send("/api/me", "PATCH", { phone, email });
+              const p = phone.replace(/[\s.()-]/g, "");
+              const e164 = /^0[1-9]\d{8}$/.test(p) ? `+33${p.slice(1)}` : p;
+              const j = await send("/api/me", "PATCH", { phone: e164, email, channels });
+              setPhone(j.user.phone);
               return "Coordonnées enregistrées";
             })
           }

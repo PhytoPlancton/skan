@@ -235,6 +235,12 @@ export default function SettingsPage() {
       </div>
 
       <AccountSection />
+
+      <details className="advanced">
+        <summary>
+          🤖 Dépôt automatique sur iBail{" "}
+          <span className="muted">— avancé, optionnel (les alertes marchent sans)</span>
+        </summary>
       <AgentSection />
 
       {/* Bandeau d'état */}
@@ -554,6 +560,7 @@ export default function SettingsPage() {
         </button>
         {saved && <span className="saved-ok">✓ Enregistré</span>}
       </div>
+      </details>
     </main>
   );
 }

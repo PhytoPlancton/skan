@@ -15,6 +15,6 @@ export async function POST(req: Request) {
   }
   const invalid = validatePassword(body.next);
   if (invalid) return Response.json({ error: invalid }, { status: 400 });
-  await updateUser(g.user._id, { password: String(body.next) });
+  await updateUser(g.user._id, { password: String(body.next), mustChangePassword: false });
   return Response.json({ ok: true });
 }

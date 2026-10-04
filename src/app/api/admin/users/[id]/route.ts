@@ -38,6 +38,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
     const invalid = validatePassword(body.password);
     if (invalid) return Response.json({ error: invalid }, { status: 400 });
     patch.password = String(body.password);
+    patch.mustChangePassword = id !== g.user._id; // réinitialisé par l'admin → provisoire
   }
   if (body.smsDailyLimit !== undefined) {
     const n = Math.round(Number(body.smsDailyLimit));

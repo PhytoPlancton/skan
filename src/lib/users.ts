@@ -15,6 +15,8 @@ import { hashPassword } from "./password";
 import { USER_ID_RE } from "./session";
 
 export type Role = "admin" | "user";
+export type Channel = "sms" | "whatsapp" | "email";
+export const ALL_CHANNELS: Channel[] = ["sms", "whatsapp", "email"];
 
 export interface UserDoc {
   _id: string;
@@ -26,6 +28,12 @@ export interface UserDoc {
   agentTokenCreatedAt: Date | null;
   /** Plafond SMS + WhatsApp par jour (protège les crédits EDJ Labs). 0 = illimité. */
   smsDailyLimit: number;
+  /** Canaux choisis par l'utilisateur (absent = tous les canaux actifs du serveur). */
+  channels?: Channel[];
+  /** Parcours d'accueil terminé (absent/null = à faire). */
+  onboardedAt?: Date | null;
+  /** Mot de passe provisoire (créé/réinitialisé par l'admin) → à changer. */
+  mustChangePassword?: boolean;
   disabled: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -40,6 +48,9 @@ export interface PublicUser {
   hasAgentToken: boolean;
   agentTokenCreatedAt: Date | null;
   smsDailyLimit: number;
+  channels: Channel[];
+  onboarded: boolean;
+  mustChangePassword: boolean;
   disabled: boolean;
   createdAt: Date;
 }
@@ -59,6 +70,10 @@ export function toPublic(u: UserDoc): PublicUser {
     hasAgentToken: !!u.agentTokenHash,
     agentTokenCreatedAt: u.agentTokenCreatedAt ?? null,
     smsDailyLimit: u.smsDailyLimit ?? DEFAULT_SMS_DAILY_LIMIT,
+    channels: u.channels ?? ALL_CHANNELS,
+    onboarded: !!u.onboardedAt,
+    // comptes créés avant ce champ : provisoire si créé par l'admin (rôle user)
+    mustChangePassword: u.mustChangePassword ?? u.role !== "admin",
     disabled: !!u.disabled,
     createdAt: u.createdAt,
   };
@@ -80,6 +95,14 @@ export function normalizeEmail(raw: unknown): string | null {
   const e = String(raw ?? "").trim();
   if (e === "") return "";
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && e.length <= 254 ? e : null;
+}
+
+/** Liste de canaux valide et non vide, ou null. */
+export function normalizeChannels(raw: unknown): Channel[] | null {
+  if (!Array.isArray(raw)) return null;
+  const set = new Set(raw.map((c) => String(c)));
+  const out = ALL_CHANNELS.filter((c) => set.has(c));
+  return out.length > 0 && out.length === set.size ? out : null;
 }
 
 export function validatePassword(pw: unknown): string | null {
@@ -127,6 +150,8 @@ export async function createUser(input: {
   phone?: string;
   email?: string;
   smsDailyLimit?: number;
+  mustChangePassword?: boolean;
+  onboarded?: boolean;
 }): Promise<UserDoc> {
   const db = await getDb();
   const now = new Date();
@@ -139,6 +164,9 @@ export async function createUser(input: {
     agentTokenHash: null,
     agentTokenCreatedAt: null,
     smsDailyLimit: input.smsDailyLimit ?? DEFAULT_SMS_DAILY_LIMIT,
+    channels: ALL_CHANNELS,
+    onboardedAt: input.onboarded ? now : null,
+    mustChangePassword: input.mustChangePassword ?? false,
     disabled: false,
     createdAt: now,
     updatedAt: now,
@@ -149,7 +177,12 @@ export async function createUser(input: {
 
 export async function updateUser(
   id: string,
-  patch: Partial<Pick<UserDoc, "phone" | "email" | "role" | "disabled" | "smsDailyLimit">> & {
+  patch: Partial<
+    Pick<
+      UserDoc,
+      "phone" | "email" | "role" | "disabled" | "smsDailyLimit" | "channels" | "onboardedAt" | "mustChangePassword"
+    >
+  > & {
     password?: string;
   },
 ): Promise<boolean> {
@@ -222,6 +255,7 @@ export async function bootstrapAndMigrate(): Promise<void> {
           phone: normalizePhone(process.env.NOTIFY_PHONE) || "",
           email: normalizeEmail(process.env.NOTIFY_EMAIL) || "",
           smsDailyLimit: 0,
+          onboarded: true,
         });
         console.log(`[bootstrap] compte admin « ${id} » créé depuis AUTH_PASSWORD_HASH`);
       } catch (e) {
@@ -238,6 +272,12 @@ export async function bootstrapAndMigrate(): Promise<void> {
   const admin = await users.find({ role: "admin" }).sort({ createdAt: 1 }).limit(1).next();
   if (!admin) return;
   const owner = admin._id;
+
+  // Comptes admin d'avant le parcours d'accueil : déjà configurés, on ne le leur impose pas.
+  await users.updateMany(
+    { role: "admin", onboardedAt: { $exists: false } },
+    { $set: { onboardedAt: new Date(), mustChangePassword: false } },
+  );
 
   // 1) Collections à documents : on pose userId sur tout ce qui n'en a pas.
   for (const c of USER_SCOPED_COLLECTIONS) {

@@ -1,4 +1,4 @@
-import { slugFromLink } from "@/lib/arpej";
+import { lookupResidencePage, slugFromLink } from "@/lib/arpej";
 import { requireUser } from "@/lib/current-user";
 import { statusForSlug } from "@/lib/checker";
 import { getResidencesCached } from "@/lib/residences";
@@ -20,6 +20,7 @@ export async function GET() {
   }
 }
 
+/** Surveiller une résidence : { slug } ou { url } (lien arpej.fr de la résidence). */
 export async function POST(req: Request) {
   const g = await requireUser();
   if (g.error) return g.error;
@@ -31,7 +32,22 @@ export async function POST(req: Request) {
   }
 
   let slug = (body.slug || "").trim().toLowerCase();
-  if (!slug && body.url) slug = slugFromLink(String(body.url).trim());
+  if (!slug && body.url) {
+    const raw = String(body.url).trim();
+    let host = "";
+    try {
+      host = new URL(raw).hostname;
+    } catch {
+      /* pas une URL */
+    }
+    if (!/(^|\.)arpej\.fr$/i.test(host) || !/\/residence\//.test(raw)) {
+      return Response.json(
+        { error: "Colle le lien d'une page résidence arpej.fr (ex. https://www.arpej.fr/fr/residence/…/)" },
+        { status: 400 },
+      );
+    }
+    slug = slugFromLink(raw).toLowerCase();
+  }
 
   if (!slug || !isValidSlug(slug)) {
     return Response.json(
@@ -43,7 +59,21 @@ export async function POST(req: Request) {
   try {
     const residences = await getResidencesCached();
     const bySlug = new Map(residences.map((r) => [r.slug, r]));
-    const status = statusForSlug(slug, bySlug, prettifySlug(slug));
+    let fallbackTitle = prettifySlug(slug);
+
+    // Absente de l'API (0 logement aujourd'hui) : on vérifie qu'elle existe vraiment.
+    if (!bySlug.has(slug)) {
+      const page = await lookupResidencePage(slug);
+      if (page && !page.exists) {
+        return Response.json(
+          { error: "Cette résidence est introuvable sur arpej.fr — vérifie le lien" },
+          { status: 404 },
+        );
+      }
+      if (page?.exists && page.title) fallbackTitle = page.title;
+    }
+
+    const status = statusForSlug(slug, bySlug, fallbackTitle);
 
     // Baseline silencieuse : on n'alerte pas pour une dispo déjà visible.
     await upsertWatch(g.user._id, {

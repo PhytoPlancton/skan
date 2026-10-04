@@ -10,6 +10,9 @@ export interface Me {
   hasAgentToken: boolean;
   agentTokenCreatedAt: string | null;
   smsDailyLimit: number;
+  channels: Array<"sms" | "whatsapp" | "email">;
+  onboarded: boolean;
+  mustChangePassword: boolean;
 }
 
 /** Hook : le compte connecté (null tant que non chargé). */
@@ -32,6 +35,10 @@ export async function logout(): Promise<void> {
 /** Barre « connecté en tant que … » (liens Admin / Déconnexion). */
 export function UserMenu({ links }: { links?: React.ReactNode }) {
   const me = useMe();
+  // Nouveau compte : parcours d'accueil avant tout le reste.
+  useEffect(() => {
+    if (me && !me.onboarded) window.location.replace("/onboarding");
+  }, [me]);
   return (
     <div className="usermenu">
       {links}

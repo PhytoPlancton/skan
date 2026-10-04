@@ -31,7 +31,14 @@ async function main() {
     await updateUser(id, { password });
     console.log(`✓ mot de passe de « ${id} » réinitialisé`);
   } else {
-    await createUser({ id, password, role: roleArg === "admin" ? "admin" : "user", phone, email });
+    await createUser({
+      id,
+      password,
+      role: roleArg === "admin" ? "admin" : "user",
+      phone,
+      email,
+      onboarded: roleArg === "admin",
+    });
     console.log(`✓ compte « ${id} » créé (${roleArg === "admin" ? "admin" : "user"})`);
   }
   (await getDb()).client.close();

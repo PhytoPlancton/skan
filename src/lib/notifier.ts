@@ -25,6 +25,8 @@ export interface Recipient {
   email: string;
   /** 0 = illimité. */
   smsDailyLimit: number;
+  /** Canaux choisis par l'utilisateur (absent = tous ceux actifs côté serveur). */
+  channels?: Channel[];
 }
 
 export type Channel = "sms" | "whatsapp" | "email";
@@ -97,7 +99,8 @@ export async function notifyText(
   const base = process.env.EDJ_API_BASE || "https://api.edj-labs.com";
   const phone = to.phone;
   const email = to.email;
-  const channels = enabledChannels();
+  // Canaux = actifs côté serveur ∩ choisis par l'utilisateur.
+  const channels = enabledChannels().filter((c) => !to.channels || to.channels.includes(c));
 
   if (process.env.NOTIFY_DRY_RUN === "1") {
     console.log(`[notify][DRY_RUN] → ${to._id} (${channels.join(", ")}) ${text}`);

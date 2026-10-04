@@ -45,6 +45,7 @@ export async function POST(req: Request) {
     role: body.role === "admin" ? "admin" : "user",
     phone,
     email,
+    mustChangePassword: true, // provisoire : la personne le change à l'accueil
   });
   return Response.json({ ok: true, user: toPublic(user) });
 }
